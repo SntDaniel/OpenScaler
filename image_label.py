@@ -378,6 +378,7 @@ class ImageLabel(QLabel):
             self._draw_length_text(
                 painter, {"start": self.temp_start, "end": self.temp_end, "scale_ratio": None}
             )
+        painter.end()
 
     def _draw_line_with_arrows(self, painter, start, end, arrow_size=10):
         # 考虑图片在纸张上的偏移和缩放
@@ -473,14 +474,15 @@ class ImageLabel(QLabel):
                 printer.setPageSize(page_size)
                 printer.setPageOrientation(QPageLayout.Portrait)
             
-            painter = QPainter(printer)
+            painter = QPainter()
+            painter.begin(printer)
             # 设置渲染质量
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             
             if self.pixmap_original:
                 # 获取PDF页面尺寸（以点为单位）
-                page_rect = printer.pageRect()
+                page_rect = printer.pageRect(QPrinter.DevicePixel)
                 
                 # 计算图片在PDF上的尺寸（毫米）
                 image_width_mm = self.pixmap_original.width() * self.image_scale_factor
@@ -495,9 +497,8 @@ class ImageLabel(QLabel):
                 image_y = (page_rect.height() - image_height_pt) / 2
                 
                 # 绘制图片
-                target_rect = printer.pageRect()
                 painter.drawImage(image_x, image_y, self.pixmap_original.toImage(),
-                                width=image_width_pt, height=image_height_pt)
+                                image_width_pt, image_height_pt)
                 
                 # 保存当前参数
                 old_scale_factor = self.scale_factor
