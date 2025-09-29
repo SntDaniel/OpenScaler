@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLabel, QMessageBox, QDialog, QScrollArea
 )
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint, Signal, QRectF
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtGui import QPageSize, QPageLayout
 
@@ -442,7 +442,11 @@ class ImageLabel(QLabel):
         ep = QPoint(int(ep_x), int(ep_y))
         midx = (sp.x()+ep.x())/2
         midy = (sp.y()+ep.y())/2
-        painter.drawText(midx+5, midy, txt)
+        # 修正文本位置，使其显示在线段中间而不是偏移
+        font_metrics = painter.fontMetrics()
+        text_width = font_metrics.horizontalAdvance(txt)
+        text_height = font_metrics.height()
+        painter.drawText(int(midx - text_width/2), int(midy - text_height/2), txt)
 
     def export_to_pdf(self, file_path, paper_settings):
         """导出为PDF"""
@@ -485,46 +489,27 @@ class ImageLabel(QLabel):
                 page_rect = printer.pageRect(QPrinter.DevicePixel)
                 
                 # 计算图片在PDF上的尺寸（毫米）
+                # 获取更高的DPI以提高画质
+                dpi = printer.resolution()
+                
+                # 计算图片物理尺寸（毫米）
                 image_width_mm = self.pixmap_original.width() * self.image_scale_factor
                 image_height_mm = self.pixmap_original.height() * self.image_scale_factor
                 
                 # 转换为点（1英寸=72点，1英寸=25.4毫米）
-                image_width_pt = image_width_mm * 72 / 25.4
-                image_height_pt = image_height_mm * 72 / 25.4
+                image_width_pt = image_width_mm * dpi / 25.4
+                image_height_pt = image_height_mm * dpi / 25.4
+                
+                # 保持图片原始宽高比
+                scaled_pixmap = self.pixmap_original.scaled(int(image_width_pt), int(image_height_pt), 
+                                                           Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 
                 # 居中放置
-                image_x = (page_rect.width() - image_width_pt) / 2
-                image_y = (page_rect.height() - image_height_pt) / 2
+                image_x = (page_rect.width() - scaled_pixmap.width()) / 2
+                image_y = (page_rect.height() - scaled_pixmap.height()) / 2
                 
-                # 绘制图片
-                painter.drawImage(image_x, image_y, self.pixmap_original.toImage(),
-                                image_width_pt, image_height_pt)
-                
-                # 保存当前参数
-                old_scale_factor = self.scale_factor
-                old_image_offset = self.image_offset
-                old_image_scale_factor = self.image_scale_factor
-                
-                # 设置PDF绘制参数
-                self.scale_factor = image_width_pt / self.pixmap_original.width()
-                self.image_offset = QPoint(image_x, image_y)
-                self.image_scale_factor = image_width_mm / self.pixmap_original.width()  # mm/像素
-                
-                # 绘制线条
-                pen = QPen(self.line_color, 2)
-                painter.setPen(pen)
-                for line in self.lines:
-                    self._draw_line_with_arrows(painter, line["start"], line["end"])
-                    self._draw_length_text(painter, line)
-                for g in self.gradients:
-                    self._draw_line_with_arrows(painter, g["start"], g["end"])
-                    self._draw_gradient_like(painter, g["start"], g["end"])
-                    self._draw_length_text(painter, g)
-                
-                # 恢复原来的值
-                self.scale_factor = old_scale_factor
-                self.image_offset = old_image_offset
-                self.image_scale_factor = old_image_scale_factor
+                # 绘制图片（只绘制图片，不绘制任何线条或文字）
+                painter.drawPixmap(image_x, image_y, scaled_pixmap)
                 
             painter.end()
             return True
