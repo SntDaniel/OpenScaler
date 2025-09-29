@@ -2,7 +2,7 @@ import sys
 import math
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QLabel, QPushButton,
-    QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QScrollArea, QInputDialog
+    QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QScrollArea
 )
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QAction
 from PySide6.QtCore import Qt, QPoint, Signal
@@ -20,7 +20,7 @@ class ImageLabel(QLabel):
         self.allow_drawing = False
         self.draw_mode = "single"
 
-        self.lines = []       # [{"start":..,"end":..,"scale_ratio":..}]
+        self.lines = []
         self.gradients = []
         self.temp_start = None
         self.temp_end = None
@@ -28,6 +28,7 @@ class ImageLabel(QLabel):
 
         self.dragging = False
         self.last_mouse_pos = None
+        self.drawing_active = False   # ⭐ 标记：是否正在画线
 
         self.btn_confirm = None
         self.btn_redraw = None
@@ -119,7 +120,21 @@ class ImageLabel(QLabel):
             self.gradients.clear()
         self.temp_start = None
         self.temp_end = None
+        self.drawing_active = False
         self.update()
+
+    def _snap_angle(self, dx, dy, threshold_deg=1):
+        """角度吸附：dx,dy -> 吸附到水平/竖直"""
+        if dx == 0 and dy == 0:
+            return (dx, dy)
+        ang = math.degrees(math.atan2(dy, dx))
+        # 接近水平 (0° / 180°)
+        if abs(ang) < threshold_deg or abs(abs(ang)-180) < threshold_deg:
+            return (dx, 0)
+        # 接近竖直 (90° / -90°)
+        if abs(abs(ang)-90) < threshold_deg:
+            return (0, dy)
+        return (dx, dy)
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.pixmap() or not self.allow_drawing:
@@ -131,20 +146,17 @@ class ImageLabel(QLabel):
             pos = event.position().toPoint()
             self.temp_start = (pos.x()/self.scale_factor, pos.y()/self.scale_factor)
             self.temp_end = self.temp_start
+            self.drawing_active = True
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.temp_start and self.allow_drawing:
+        if self.temp_start and self.allow_drawing and self.drawing_active:
             pos = event.position().toPoint()
             ex, ey = pos.x()/self.scale_factor, pos.y()/self.scale_factor
-            if self.draw_mode == "single":
-                dx = ex - self.temp_start[0]
-                dy = ey - self.temp_start[1]
-                if abs(dx) > abs(dy):
-                    ey = self.temp_start[1]
-                else:
-                    ex = self.temp_start[0]
-            self.temp_end = (ex, ey)
+            dx = ex - self.temp_start[0]
+            dy = ey - self.temp_start[1]
+            dx, dy = self._snap_angle(dx, dy, threshold_deg=1)
+            self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
             self.update()
         elif self.dragging and self.last_mouse_pos:
             delta = event.globalPosition().toPoint() - self.last_mouse_pos
@@ -156,23 +168,28 @@ class ImageLabel(QLabel):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
+            if self.allow_drawing and self.temp_start and self.drawing_active:
+                pos = event.position().toPoint()
+                ex, ey = pos.x()/self.scale_factor, pos.y()/self.scale_factor
+                dx = ex - self.temp_start[0]
+                dy = ey - self.temp_start[1]
+                dx, dy = self._snap_angle(dx, dy, threshold_deg=1)
+                self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
+                self.drawing_active = False
+                self.update()
             self.dragging = False
 
     # ========= 确认/重画 =========
     def confirm_line(self):
         if self.temp_start and self.temp_end:
-            pixel_length = math.dist(self.temp_start, self.temp_end)
-            real_length, ok = QInputDialog.getDouble(self, "输入目标长度", "请输入线条的真实长度 (cm)：",
-                                                     decimals=2, min=0.01)
-            if not ok: return
-            scale_ratio = real_length/pixel_length if pixel_length>0 else 1
             if self.draw_mode == "single":
-                self.lines.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": scale_ratio})
+                self.lines.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": None})
             elif self.draw_mode == "gradient":
-                self.gradients.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": scale_ratio})
+                self.gradients.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": None})
         self.temp_start = None
         self.temp_end = None
         self.allow_drawing = False
+        self.drawing_active = False
         self.update()
         if self.btn_confirm: self.btn_confirm.hide()
         if self.btn_redraw: self.btn_redraw.hide()
@@ -180,6 +197,7 @@ class ImageLabel(QLabel):
     def redraw_line(self):
         self.temp_start = None
         self.temp_end = None
+        self.drawing_active = False
         self.update()
 
     # ========= 绘制 =========
@@ -200,6 +218,7 @@ class ImageLabel(QLabel):
             self._draw_line_with_arrows(painter,self.temp_start,self.temp_end)
             if self.draw_mode=="gradient":
                 self._draw_gradient_like(painter,self.temp_start,self.temp_end)
+            self._draw_length_text(painter,{"start":self.temp_start,"end":self.temp_end,"scale_ratio":None})
 
     def _draw_line_with_arrows(self,painter,start,end,arrow_size=10):
         sp = QPoint(int(start[0]*self.scale_factor),int(start[1]*self.scale_factor))
@@ -228,8 +247,9 @@ class ImageLabel(QLabel):
         painter.drawLine(a1,a2); painter.drawLine(b1,b2)
 
     def _draw_length_text(self,painter,line):
-        p1,p2=line["start"],line["end"]; L=math.dist(p1,p2)
-        txt=f"{L*line['scale_ratio']:.2f} cm" if line.get("scale_ratio") else f"{L:.1f} px"
+        p1,p2=line["start"],line["end"]
+        L=math.dist(p1,p2)
+        txt=f"{L:.1f} px"
         sp=QPoint(int(p1[0]*self.scale_factor),int(p1[1]*self.scale_factor))
         ep=QPoint(int(p2[0]*self.scale_factor),int(p2[1]*self.scale_factor))
         midx=(sp.x()+ep.x())/2; midy=(sp.y()+ep.y())/2
@@ -239,7 +259,7 @@ class ImageLabel(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("测量工具 (鼠标缩放+箭头+输入长度)")
+        self.setWindowTitle("测量工具 (缩放+箭头+确认+角度吸附)")
         self.image_label=ImageLabel()
         self.scroll_area=QScrollArea()
         self.scroll_area.setWidget(self.image_label)
