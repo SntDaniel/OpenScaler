@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtPrintSupport import QPrinter
+from PySide6.QtGui import QPageSize
 
 from dialogs import LengthInputDialog
 from utils import snap_angle, point_to_line_distance
@@ -42,8 +43,8 @@ class ImageLabel(QLabel):
             "is_portrait": True
         }
         
-        # 图片在纸张上的缩放因子
-        self.image_scale_factor = 1.0
+        # 图片在纸张上的缩放因子 (毫米/像素)
+        self.image_scale_factor = 1.0  # 默认1.0毫米/像素
         self.image_offset = QPoint(0, 0)  # 图片在纸张上的偏移
 
     def set_paper_settings(self, settings):
@@ -71,7 +72,8 @@ class ImageLabel(QLabel):
             return
             
         self.pixmap_original = pixmap
-        self.image_scale_factor = 1.0
+        # 初始时，将图片至少一边贴边放置，计算合适的image_scale_factor
+        self._calculate_initial_scale()
         self.image_offset = QPoint(0, 0)
         self._update_paper_display()
         self.lines.clear()
@@ -80,6 +82,25 @@ class ImageLabel(QLabel):
         self.temp_end = None
         self.update()
         self.scale_changed.emit(1.0)
+
+    def _calculate_initial_scale(self):
+        """计算初始缩放因子，使图片至少一边贴边"""
+        if not self.pixmap_original:
+            return
+            
+        # 纸张可用空间（留出一点边距）
+        margin_mm = 5
+        available_width_mm = self.paper_settings["width_mm"] - 2 * margin_mm
+        available_height_mm = self.paper_settings["height_mm"] - 2 * margin_mm
+        
+        # 计算如果宽度贴边时的缩放因子
+        scale_by_width = available_width_mm / self.pixmap_original.width()  # mm/像素
+        
+        # 计算如果高度贴边时的缩放因子
+        scale_by_height = available_height_mm / self.pixmap_original.height()  # mm/像素
+        
+        # 选择较小的缩放因子（使图片至少一边贴边）
+        self.image_scale_factor = min(scale_by_width, scale_by_height)
 
     def reload_image_on_paper(self, paper_settings):
         """重新加载图片以适应纸张设置"""
@@ -90,12 +111,9 @@ class ImageLabel(QLabel):
 
     def _update_paper_display(self):
         """更新纸张显示"""
-        if not self.pixmap_original:
-            return
-            
         # 创建纸张大小的Pixmap
-        # 假设显示分辨率为每毫米4像素
-        display_scale = 4
+        # 使用更高的分辨率显示 (每毫米8像素)
+        display_scale = 8
         paper_width = int(self.paper_settings["width_mm"] * display_scale)
         paper_height = int(self.paper_settings["height_mm"] * display_scale)
         
@@ -103,30 +121,27 @@ class ImageLabel(QLabel):
         paper_pixmap = QPixmap(paper_width, paper_height)
         paper_pixmap.fill(Qt.white)
         
-        # 计算图片在纸张上的大小和位置（居中）
-        paper_ratio = paper_width / paper_height
-        image_ratio = self.pixmap_original.width() / self.pixmap_original.height()
-        
-        if image_ratio > paper_ratio:
-            # 图片更宽，以宽度为准
-            scaled_width = int(paper_width * 0.8)  # 留出边距
-            scaled_height = int(scaled_width / image_ratio)
-        else:
-            # 图片更高，以高度为准
-            scaled_height = int(paper_height * 0.8)  # 留出边距
-            scaled_width = int(scaled_height * image_ratio)
+        if self.pixmap_original:
+            # 根据image_scale_factor计算图片显示大小
+            # image_scale_factor是毫米/像素，display_scale是像素/毫米（显示时）
+            display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale)
+            display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale)
             
-        scaled_image = self.pixmap_original.scaled(scaled_width, scaled_height, 
-                                                  Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        
-        # 居中放置
-        self.image_offset = QPoint((paper_width - scaled_width) // 2, 
-                                  (paper_height - scaled_height) // 2)
-        
-        # 在纸张上绘制图片
-        painter = QPainter(paper_pixmap)
-        painter.drawPixmap(self.image_offset, scaled_image)
-        painter.end()
+            # 使用更高的质量缩放
+            scaled_image = self.pixmap_original.scaled(display_width, display_height, 
+                                                      Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # 居中放置
+            self.image_offset = QPoint((paper_width - display_width) // 2, 
+                                      (paper_height - display_height) // 2)
+            
+            # 在纸张上绘制图片
+            painter = QPainter(paper_pixmap)
+            # 设置渲染质量
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.drawPixmap(self.image_offset, scaled_image)
+            painter.end()
         
         # 设置显示
         self.setPixmap(paper_pixmap)
@@ -189,6 +204,21 @@ class ImageLabel(QLabel):
         self.drawing_active = False
         self.update()
 
+    def _screen_to_image_coords(self, screen_x, screen_y):
+        """将屏幕坐标转换为图片坐标（像素单位）"""
+        display_scale = 8  # 显示时每毫米8像素
+        # 考虑缩放和偏移
+        img_x = (screen_x - self.image_offset.x() * self.scale_factor) / (self.image_scale_factor * display_scale * self.scale_factor)
+        img_y = (screen_y - self.image_offset.y() * self.scale_factor) / (self.image_scale_factor * display_scale * self.scale_factor)
+        return (img_x, img_y)
+
+    def _image_to_screen_coords(self, img_x, img_y):
+        """将图片坐标（像素单位）转换为屏幕坐标"""
+        display_scale = 8  # 显示时每毫米8像素
+        screen_x = img_x * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.x() * self.scale_factor
+        screen_y = img_y * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.y() * self.scale_factor
+        return (screen_x, screen_y)
+
     def mousePressEvent(self, event: QMouseEvent):
         if not self.pixmap() or not self.allow_drawing:
             if event.button() == Qt.LeftButton:
@@ -197,9 +227,8 @@ class ImageLabel(QLabel):
             return
         if event.button() == Qt.LeftButton:
             pos = event.position().toPoint()
-            # 转换为相对于图片的坐标
-            img_x = (pos.x() - self.image_offset.x() * self.scale_factor) / self.scale_factor
-            img_y = (pos.y() - self.image_offset.y() * self.scale_factor) / self.scale_factor
+            # 转换为相对于图片的坐标（以原始图片像素为单位）
+            img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
             self.temp_start = (img_x, img_y)
             self.temp_end = self.temp_start
             self.drawing_active = True
@@ -208,9 +237,8 @@ class ImageLabel(QLabel):
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.temp_start and self.allow_drawing and self.drawing_active:
             pos = event.position().toPoint()
-            # 转换为相对于图片的坐标
-            img_x = (pos.x() - self.image_offset.x() * self.scale_factor) / self.scale_factor
-            img_y = (pos.y() - self.image_offset.y() * self.scale_factor) / self.scale_factor
+            # 转换为相对于图片的坐标（以原始图片像素为单位）
+            img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
             ex, ey = img_x, img_y
             dx = ex - self.temp_start[0]
             dy = ey - self.temp_start[1]
@@ -229,9 +257,8 @@ class ImageLabel(QLabel):
         if event.button() == Qt.LeftButton:
             if self.allow_drawing and self.temp_start and self.drawing_active:
                 pos = event.position().toPoint()
-                # 转换为相对于图片的坐标
-                img_x = (pos.x() - self.image_offset.x() * self.scale_factor) / self.scale_factor
-                img_y = (pos.y() - self.image_offset.y() * self.scale_factor) / self.scale_factor
+                # 转换为相对于图片的坐标（以原始图片像素为单位）
+                img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
                 ex, ey = img_x, img_y
                 dx = ex - self.temp_start[0]
                 dy = ey - self.temp_start[1]
@@ -265,11 +292,11 @@ class ImageLabel(QLabel):
         end = line["end"]
         
         # 将原始坐标转换为当前缩放下的坐标
-        # 需要考虑图片在纸张上的偏移
-        sp = QPoint(int(start[0] * self.scale_factor + self.image_offset.x() * self.scale_factor), 
-                   int(start[1] * self.scale_factor + self.image_offset.y() * self.scale_factor))
-        ep = QPoint(int(end[0] * self.scale_factor + self.image_offset.x() * self.scale_factor), 
-                   int(end[1] * self.scale_factor + self.image_offset.y() * self.scale_factor))
+        sp_x, sp_y = self._image_to_screen_coords(start[0], start[1])
+        ep_x, ep_y = self._image_to_screen_coords(end[0], end[1])
+        
+        sp = QPoint(int(sp_x), int(sp_y))
+        ep = QPoint(int(ep_x), int(ep_y))
         
         # 计算点到线段的距离
         distance = point_to_line_distance(point, sp, ep)
@@ -329,6 +356,9 @@ class ImageLabel(QLabel):
         if not self.pixmap():
             return
         painter = QPainter(self)
+        # 提高渲染质量
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.drawPixmap(0, 0, self.pixmap())
         pen = QPen(self.line_color, 2)
         painter.setPen(pen)
@@ -349,10 +379,12 @@ class ImageLabel(QLabel):
 
     def _draw_line_with_arrows(self, painter, start, end, arrow_size=10):
         # 考虑图片在纸张上的偏移和缩放
-        sp = QPoint(int(start[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(start[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
-        ep = QPoint(int(end[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(end[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
+        display_scale = 8  # 显示时每毫米8像素
+        sp_x, sp_y = self._image_to_screen_coords(start[0], start[1])
+        ep_x, ep_y = self._image_to_screen_coords(end[0], end[1])
+        
+        sp = QPoint(int(sp_x), int(sp_y))
+        ep = QPoint(int(ep_x), int(ep_y))
         painter.drawLine(sp, ep)
         dx, dy = ep.x()-sp.x(), ep.y()-sp.y()
         length = math.hypot(dx, dy) or 1
@@ -371,10 +403,12 @@ class ImageLabel(QLabel):
 
     def _draw_gradient_like(self, painter, start, end, extend=2000):
         # 考虑图片在纸张上的偏移和缩放
-        sp = QPoint(int(start[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(start[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
-        ep = QPoint(int(end[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(end[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
+        display_scale = 8  # 显示时每毫米8像素
+        sp_x, sp_y = self._image_to_screen_coords(start[0], start[1])
+        ep_x, ep_y = self._image_to_screen_coords(end[0], end[1])
+        
+        sp = QPoint(int(sp_x), int(sp_y))
+        ep = QPoint(int(ep_x), int(ep_y))
         dx, dy = ep.x()-sp.x(), ep.y()-sp.y()
         length = math.hypot(dx, dy) or 1
         nx, ny = -dy/length, dx/length
@@ -391,14 +425,18 @@ class ImageLabel(QLabel):
         if "real_length" in line:
             txt = f"{line['real_length']:.2f} mm"
         else:
-            L = math.dist(p1, p2)
-            txt = f"{L:.1f} px"
+            # 计算实际长度（像素长度 * 每像素代表的毫米数）
+            pixel_length = math.dist(p1, p2)
+            real_length = pixel_length * self.image_scale_factor
+            txt = f"{real_length:.2f} mm"
             
         # 考虑图片在纸张上的偏移和缩放
-        sp = QPoint(int(p1[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(p1[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
-        ep = QPoint(int(p2[0]*self.scale_factor + self.image_offset.x()*self.scale_factor), 
-                   int(p2[1]*self.scale_factor + self.image_offset.y()*self.scale_factor))
+        display_scale = 8  # 显示时每毫米8像素
+        sp_x, sp_y = self._image_to_screen_coords(p1[0], p1[1])
+        ep_x, ep_y = self._image_to_screen_coords(p2[0], p2[1])
+        
+        sp = QPoint(int(sp_x), int(sp_y))
+        ep = QPoint(int(ep_x), int(ep_y))
         midx = (sp.x()+ep.x())/2
         midy = (sp.y()+ep.y())/2
         painter.drawText(midx+5, midy, txt)
@@ -412,15 +450,15 @@ class ImageLabel(QLabel):
             
             # 设置纸张大小
             if paper_settings["size_name"] == "A4":
-                printer.setPageSize(QPrinter.A4)
+                printer.setPageSize(QPageSize(QPageSize.A4))
             elif paper_settings["size_name"] == "A3":
-                printer.setPageSize(QPrinter.A3)
+                printer.setPageSize(QPageSize(QPageSize.A3))
             elif paper_settings["size_name"] == "A5":
-                printer.setPageSize(QPrinter.A5)
+                printer.setPageSize(QPageSize(QPageSize.A5))
             elif paper_settings["size_name"] == "Letter":
-                printer.setPageSize(QPrinter.Letter)
+                printer.setPageSize(QPageSize(QPageSize.Letter))
             elif paper_settings["size_name"] == "Legal":
-                printer.setPageSize(QPrinter.Legal)
+                printer.setPageSize(QPageSize(QPageSize.Legal))
                 
             # 设置方向
             if paper_settings["is_portrait"]:
@@ -429,37 +467,40 @@ class ImageLabel(QLabel):
                 printer.setOrientation(QPrinter.Landscape)
             
             painter = QPainter(printer)
+            # 设置渲染质量
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            
             if self.pixmap_original:
-                # 在PDF中绘制原始图片
-                # 计算图片在PDF页面上的大小和位置
+                # 获取PDF页面尺寸（以点为单位）
                 page_rect = printer.pageRect()
-                paper_ratio = page_rect.width() / page_rect.height()
-                image_ratio = self.pixmap_original.width() / self.pixmap_original.height()
                 
-                if image_ratio > paper_ratio:
-                    # 图片更宽，以宽度为准
-                    scaled_width = int(page_rect.width() * 0.8)  # 留出边距
-                    scaled_height = int(scaled_width / image_ratio)
-                else:
-                    # 图片更高，以高度为准
-                    scaled_height = int(page_rect.height() * 0.8)  # 留出边距
-                    scaled_width = int(scaled_height * image_ratio)
+                # 计算图片在PDF上的尺寸（毫米）
+                image_width_mm = self.pixmap_original.width() * self.image_scale_factor
+                image_height_mm = self.pixmap_original.height() * self.image_scale_factor
+                
+                # 转换为点（1英寸=72点，1英寸=25.4毫米）
+                image_width_pt = image_width_mm * 72 / 25.4
+                image_height_pt = image_height_mm * 72 / 25.4
                 
                 # 居中放置
-                image_x = (page_rect.width() - scaled_width) // 2
-                image_y = (page_rect.height() - scaled_height) // 2
+                image_x = (page_rect.width() - image_width_pt) / 2
+                image_y = (page_rect.height() - image_height_pt) / 2
                 
                 # 绘制图片
-                target_rect = QPoint(image_x, image_y)
-                scaled_image = self.pixmap_original.scaled(scaled_width, scaled_height, 
-                                                          Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                painter.drawPixmap(target_rect, scaled_image)
+                target_rect = printer.pageRect()
+                painter.drawImage(image_x, image_y, self.pixmap_original.toImage(),
+                                width=image_width_pt, height=image_height_pt)
                 
-                # 根据图片缩放因子绘制线条
+                # 保存当前参数
                 old_scale_factor = self.scale_factor
                 old_image_offset = self.image_offset
-                self.scale_factor = scaled_width / self.pixmap_original.width()
+                old_image_scale_factor = self.image_scale_factor
+                
+                # 设置PDF绘制参数
+                self.scale_factor = image_width_pt / self.pixmap_original.width()
                 self.image_offset = QPoint(image_x, image_y)
+                self.image_scale_factor = image_width_mm / self.pixmap_original.width()  # mm/像素
                 
                 # 绘制线条
                 pen = QPen(self.line_color, 2)
@@ -475,6 +516,7 @@ class ImageLabel(QLabel):
                 # 恢复原来的值
                 self.scale_factor = old_scale_factor
                 self.image_offset = old_image_offset
+                self.image_scale_factor = old_image_scale_factor
                 
             painter.end()
             return True
