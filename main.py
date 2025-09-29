@@ -2,39 +2,34 @@ import sys
 import math
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QLabel, QPushButton,
-    QVBoxLayout, QWidget, QInputDialog, QMessageBox, QHBoxLayout, QScrollArea
+    QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QScrollArea
 )
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QAction
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QGuiApplication
 
 
 class ImageLabel(QLabel):
-    scale_changed = Signal(float)
-
     def __init__(self):
         super().__init__()
-        self.setMouseTracking(True)
         self.pixmap_original = None
         self.scale_factor = 1.0
+        self.draw_mode = "single"
         self.allow_drawing = False
-        self.drawing = False
-        self.start_orig = None
-        self.end_orig = None
+
+        # 正式保存的线
         self.lines = []
+        self.gradients = []
+
+        # 临时线
+        self.temp_start = None
+        self.temp_end = None
+
         self.line_color = QColor(Qt.red)
 
-        self.dragging = False
-        self.last_mouse_pos = None
-
-    def get_scroll_area(self):
-        """向上查找所属的 QScrollArea"""
-        p = self.parentWidget()
-        while p is not None:
-            if isinstance(p, QScrollArea):
-                return p
-            p = p.parentWidget()
-        return None
+        # 按钮引用（供控制显示隐藏）
+        self.btn_confirm = None
+        self.btn_redraw = None
 
     def load_image(self, path):
         pixmap = QPixmap(path)
@@ -42,9 +37,9 @@ class ImageLabel(QLabel):
             QMessageBox.warning(self, "加载失败", "无法加载图片。")
             return
 
-        # 限制最大尺寸，避免超大图引发问题
+        # 屏幕适配
         screen_size = QGuiApplication.primaryScreen().availableSize()
-        max_w, max_h = int(screen_size.width() * 0.8), int(screen_size.height() * 0.8)
+        max_w, max_h = int(screen_size.width()*0.8), int(screen_size.height()*0.8)
         if pixmap.width() > max_w or pixmap.height() > max_h:
             pixmap = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
@@ -52,158 +47,80 @@ class ImageLabel(QLabel):
         self.scale_factor = 1.0
         self.setPixmap(pixmap)
         self.resize(pixmap.size())
+
         self.lines.clear()
-        self.start_orig = None
-        self.end_orig = None
+        self.gradients.clear()
+        self.temp_start = None
+        self.temp_end = None
         self.update()
 
-    def set_drawing_enabled(self, enabled: bool, clear_previous=False):
+    def set_drawing_enabled(self, enabled: bool, mode=None, clear_previous=False):
         self.allow_drawing = enabled
-        self.drawing = False
-        self.start_orig = None
-        self.end_orig = None
+        if mode:
+            self.draw_mode = mode
         if clear_previous:
             self.lines.clear()
+            self.gradients.clear()
+        self.temp_start = None
+        self.temp_end = None
         self.update()
-
-    def apply_zoom(self, factor, center=None):
-        if not self.pixmap_original:
-            return
-
-        old_factor = self.scale_factor
-        self.scale_factor *= factor
-        self.scale_factor = max(0.1, min(5.0, self.scale_factor))
-
-        new_w = int(self.pixmap_original.width() * self.scale_factor)
-        new_h = int(self.pixmap_original.height() * self.scale_factor)
-        scaled_pixmap = self.pixmap_original.scaled(
-            new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.setPixmap(scaled_pixmap)
-        self.resize(scaled_pixmap.size())
-        self.update()
-
-        if center:
-            scroll_area = self.get_scroll_area()
-            if scroll_area:
-                hbar = scroll_area.horizontalScrollBar()
-                vbar = scroll_area.verticalScrollBar()
-
-                # 视口左上角在内容中的偏移
-                offset_x = hbar.value()
-                offset_y = vbar.value()
-
-                # 鼠标在视口中的位置
-                view_x = center.x()
-                view_y = center.y()
-
-                # 鼠标在原始图像中的逻辑坐标（缩放前）
-                content_x = (offset_x + view_x) / old_factor
-                content_y = (offset_y + view_y) / old_factor
-
-                # 缩放后对应坐标
-                new_content_x = content_x * self.scale_factor
-                new_content_y = content_y * self.scale_factor
-
-                # 设置滚动条以保持缩放点位置不变
-                hbar.setValue(int(new_content_x - view_x))
-                vbar.setValue(int(new_content_y - view_y))
-
-        self.scale_changed.emit(self.scale_factor)
-
-    def reset_zoom(self):
-        if not self.pixmap_original:
-            return
-        self.scale_factor = 1.0
-        self.setPixmap(self.pixmap_original)
-        self.resize(self.pixmap_original.size())
-        self.update()
-        self.scale_changed.emit(self.scale_factor)
-
-    def wheelEvent(self, event):
-        if not self.pixmap_original:
-            return
-        if event.angleDelta().y() > 0:
-            self.apply_zoom(1.25, event.position().toPoint())
-        else:
-            self.apply_zoom(0.8, event.position().toPoint())
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.pixmap() or not self.allow_drawing:
-            if event.button() == Qt.LeftButton:
-                self.dragging = True
-                self.last_mouse_pos = event.globalPosition().toPoint()
             return
-
         if event.button() == Qt.LeftButton:
-            self.drawing = True
             pos = event.position().toPoint()
-            self.start_orig = (pos.x() / self.scale_factor, pos.y() / self.scale_factor)
-            self.end_orig = self.start_orig
+            px, py = pos.x()/self.scale_factor, pos.y()/self.scale_factor
+            self.temp_start = (px, py)
+            self.temp_end = self.temp_start
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.drawing and self.start_orig:
-            pos = event.position().toPoint()
-            ex = pos.x() / self.scale_factor
-            ey = pos.y() / self.scale_factor
-            dx = ex - self.start_orig[0]
-            dy = ey - self.start_orig[1]
+        if not self.allow_drawing or not self.temp_start:
+            return
+        pos = event.position().toPoint()
+        ex, ey = pos.x()/self.scale_factor, pos.y()/self.scale_factor
+
+        if self.draw_mode == "single":
+            # 单线模式时自动横竖对齐
+            dx = ex - self.temp_start[0]
+            dy = ey - self.temp_start[1]
             if abs(dx) > abs(dy):
-                ey = self.start_orig[1]
+                ey = self.temp_start[1]
             else:
-                ex = self.start_orig[0]
-            self.end_orig = (ex, ey)
-            self.update()
-        elif self.dragging and self.last_mouse_pos:
-            delta = event.globalPosition().toPoint() - self.last_mouse_pos
-            scroll_area = self.get_scroll_area()
-            if scroll_area:
-                scroll_area.horizontalScrollBar().setValue(
-                    scroll_area.horizontalScrollBar().value() - delta.x()
-                )
-                scroll_area.verticalScrollBar().setValue(
-                    scroll_area.verticalScrollBar().value() - delta.y()
-                )
-            self.last_mouse_pos = event.globalPosition().toPoint()
+                ex = self.temp_start[0]
+        self.temp_end = (ex, ey)
+        self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            if self.drawing:
-                self.drawing = False
-                self.update()
-            if self.dragging:
-                self.dragging = False
+            self.update()
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if not self.lines:
-            return
-        pos = event.position().toPoint()
-        px = pos.x() / self.scale_factor
-        py = pos.y() / self.scale_factor
-        for line in self.lines:
-            if self._point_near_line((px, py), line["start"], line["end"]):
-                real_length, ok = QInputDialog.getDouble(
-                    self, "修改真实长度", "请输入这条线的真实长度（单位：cm）：",
-                    decimals=3, min=0.0001,
-                )
-                if ok and real_length > 0:
-                    pixel_length = math.dist(line["start"], line["end"])
-                    line["scale_ratio"] = real_length / pixel_length
-                    self.update()
-                break
+    def confirm_line(self):
+        """点击确认按钮调用"""
+        if self.temp_start and self.temp_end:
+            if self.draw_mode == "single":
+                self.lines.append({"start": self.temp_start, "end": self.temp_end})
+            elif self.draw_mode == "gradient":
+                self.gradients.append({"start": self.temp_start, "end": self.temp_end})
 
-    def _point_near_line(self, p, p1, p2, threshold=5):
-        x0, y0 = p
-        x1, y1 = p1
-        x2, y2 = p2
-        if (x1, y1) == (x2, y2):
-            return math.hypot(x0 - x1, y0 - y1) <= threshold / self.scale_factor
-        t = ((x0 - x1) * (x2 - x1) + (y0 - y1) * (y2 - y1)) / ((x2 - x1) ** 2 + (y2 - y1) ** 2)
-        t = max(0, min(1, t))
-        proj_x = x1 + t * (x2 - x1)
-        proj_y = y1 + t * (y2 - y1)
-        return math.hypot(x0 - proj_x, y0 - proj_y) <= threshold / self.scale_factor
+        # 清空临时线
+        self.temp_start = None
+        self.temp_end = None
+        self.allow_drawing = False
+        self.update()
+
+        # 隐藏按钮
+        if self.btn_confirm:
+            self.btn_confirm.hide()
+        if self.btn_redraw:
+            self.btn_redraw.hide()
+
+    def redraw_line(self):
+        """点击重新画线，丢弃临时线"""
+        self.temp_start = None
+        self.temp_end = None
+        self.update()
 
     def paintEvent(self, event):
         if not self.pixmap():
@@ -213,53 +130,67 @@ class ImageLabel(QLabel):
         pen = QPen(self.line_color, 2)
         painter.setPen(pen)
 
+        # 已确认的线
         for line in self.lines:
-            sp = QPoint(int(line["start"][0] * self.scale_factor), int(line["start"][1] * self.scale_factor))
-            ep = QPoint(int(line["end"][0] * self.scale_factor), int(line["end"][1] * self.scale_factor))
+            sp = QPoint(int(line["start"][0]*self.scale_factor), int(line["start"][1]*self.scale_factor))
+            ep = QPoint(int(line["end"][0]*self.scale_factor), int(line["end"][1]*self.scale_factor))
             painter.drawLine(sp, ep)
-            self._draw_length_text(painter, sp, ep, line)
 
-        if self.start_orig and self.end_orig:
-            sp = QPoint(int(self.start_orig[0] * self.scale_factor), int(self.start_orig[1] * self.scale_factor))
-            ep = QPoint(int(self.end_orig[0] * self.scale_factor), int(self.end_orig[1] * self.scale_factor))
-            painter.drawLine(sp, ep)
-            temp_line = {"start": self.start_orig, "end": self.end_orig, "scale_ratio": None}
-            self._draw_length_text(painter, sp, ep, temp_line)
+        for g in self.gradients:
+            self._draw_gradient_like(painter, g["start"], g["end"])
 
-    def _draw_length_text(self, painter, sp, ep, line):
-        p1 = line["start"]
-        p2 = line["end"]
-        pixel_length = math.dist(p1, p2)
-        if line.get("scale_ratio") is not None:
-            text = f"{pixel_length * line['scale_ratio']:.2f} cm"
-        else:
-            text = f"{pixel_length:.1f} px"
-        mid_x = (sp.x() + ep.x()) / 2
-        mid_y = (sp.y() + ep.y()) / 2
-        painter.drawText(mid_x + 5, mid_y, text)
+        # 临时线
+        if self.temp_start and self.temp_end:
+            if self.draw_mode == "single":
+                sp = QPoint(int(self.temp_start[0]*self.scale_factor), int(self.temp_start[1]*self.scale_factor))
+                ep = QPoint(int(self.temp_end[0]*self.scale_factor), int(self.temp_end[1]*self.scale_factor))
+                painter.drawLine(sp, ep)
+            elif self.draw_mode == "gradient":
+                self._draw_gradient_like(painter, self.temp_start, self.temp_end)
+
+    def _draw_gradient_like(self, painter, start, end, extend=2000):
+        sp = QPoint(int(start[0]*self.scale_factor), int(start[1]*self.scale_factor))
+        ep = QPoint(int(end[0]*self.scale_factor), int(end[1]*self.scale_factor))
+        dx, dy = ep.x()-sp.x(), ep.y()-sp.y()
+        length = math.hypot(dx, dy) or 1
+        nx, ny = -dy/length, dx/length
+        a1 = sp + QPoint(int(nx*extend), int(ny*extend))
+        a2 = sp - QPoint(int(nx*extend), int(ny*extend))
+        painter.drawLine(a1, a2)
+        b1 = ep + QPoint(int(nx*extend), int(ny*extend))
+        b2 = ep - QPoint(int(nx*extend), int(ny*extend))
+        painter.drawLine(b1, b2)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("图片测量工具（滚轮缩放 + 鼠标拖动）")
+        self.setWindowTitle("带确认的测量工具")
+
         self.image_label = ImageLabel()
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidget(self.image_label)
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        # 按钮
-        self.confirm_button = QPushButton("确定")
-        self.confirm_button.clicked.connect(self.confirm_line)
-        self.confirm_button.hide()
-        self.redraw_button = QPushButton("重新画线")
-        self.redraw_button.clicked.connect(self.redraw_line)
-        self.redraw_button.hide()
+        # 确认/重画按钮
+        self.btn_confirm = QPushButton("确认")
+        self.btn_redraw = QPushButton("重新画线")
+
+        # 注册事件
+        self.btn_confirm.clicked.connect(self.image_label.confirm_line)
+        self.btn_redraw.clicked.connect(self.image_label.redraw_line)
+
+        # 默认隐藏
+        self.btn_confirm.hide()
+        self.btn_redraw.hide()
+
+        # 让内部能控制按钮
+        self.image_label.btn_confirm = self.btn_confirm
+        self.image_label.btn_redraw = self.btn_redraw
 
         btn_layout = QHBoxLayout()
-        btn_layout.addWidget(self.confirm_button)
-        btn_layout.addWidget(self.redraw_button)
+        btn_layout.addWidget(self.btn_confirm)
+        btn_layout.addWidget(self.btn_redraw)
 
         layout = QVBoxLayout()
         layout.addWidget(self.scroll_area)
@@ -276,93 +207,37 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.load_image)
         file_menu.addAction(open_action)
 
-        view_menu = menubar.addMenu("视图")
-        zoom_in_action = QAction("放大 (Ctrl +)", self)
-        zoom_in_action.triggered.connect(lambda: self.zoom_via_menu(1.25))
-        zoom_out_action = QAction("缩小 (Ctrl -)", self)
-        zoom_out_action.triggered.connect(lambda: self.zoom_via_menu(0.8))
-        reset_action = QAction("还原 (Ctrl 0)", self)
-        reset_action.triggered.connect(self.image_label.reset_zoom)
-        for a in (zoom_in_action, zoom_out_action, reset_action):
-            view_menu.addAction(a)
-
         measure_menu = menubar.addMenu("测量")
-        custom_line_action = QAction("自定义线条", self)
-        custom_line_action.triggered.connect(self.enable_custom_line)
-        measure_menu.addAction(custom_line_action)
-
-        # 状态栏
-        self.statusBar().showMessage("缩放: 100%")
-        self.image_label.scale_changed.connect(self.update_statusbar)
-
-        self._first_load_done = False
+        single_action = QAction("单线测量", self)
+        single_action.triggered.connect(self.enable_single)
+        gradient_action = QAction("渐变线测量", self)
+        gradient_action.triggered.connect(self.enable_gradient)
+        measure_menu.addAction(single_action)
+        measure_menu.addAction(gradient_action)
 
     def load_image(self):
-        file_path, _ = QFileDialog.getOpenFileName(
+        file, _ = QFileDialog.getOpenFileName(
             self, "选择图片", "", "Images (*.png *.jpg *.bmp *.jpeg)"
         )
-        if file_path:
-            self.image_label.load_image(file_path)
-            self.confirm_button.hide()
-            self.redraw_button.hide()
-            self.update_statusbar(self.image_label.scale_factor)
+        if file:
+            self.image_label.load_image(file)
+            self.btn_confirm.hide()
+            self.btn_redraw.hide()
 
-            img_size = self.image_label.pixmap().size()
-            screen = QGuiApplication.primaryScreen().availableGeometry()
-            if not self._first_load_done:
-                w = min(img_size.width() + 50, screen.width() * 0.9)
-                h = min(img_size.height() + 100, screen.height() * 0.9)
-                self.resize(w, h)
-                self.move((screen.width() - self.width()) // 2,
-                          (screen.height() - self.height()) // 2)
-                self._first_load_done = True
-            else:
-                geo = self.geometry()
-                center = geo.center()
-                w = min(img_size.width() + 50, screen.width() * 0.9)
-                h = min(img_size.height() + 100, screen.height() * 0.9)
-                self.resize(w, h)
-                geo = self.geometry()
-                geo.moveCenter(center)
-                self.setGeometry(geo)
+    def enable_single(self):
+        self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
+        self.btn_confirm.show()
+        self.btn_redraw.show()
 
-    def zoom_via_menu(self, factor):
-        center_point = self.image_label.rect().center()
-        self.image_label.apply_zoom(factor, center_point)
-
-    def enable_custom_line(self):
-        if not self.image_label.pixmap():
-            QMessageBox.information(self, "提示", "请先加载图片。")
-            return
-        self.image_label.set_drawing_enabled(True, clear_previous=True)
-        self.confirm_button.show()
-        self.redraw_button.show()
-
-    def confirm_line(self):
-        if self.image_label.start_orig and self.image_label.end_orig:
-            sp = tuple(self.image_label.start_orig)
-            ep = tuple(self.image_label.end_orig)
-            self.image_label.lines.append({"start": sp, "end": ep, "scale_ratio": None})
-        self.image_label.start_orig = None
-        self.image_label.end_orig = None
-        self.image_label.set_drawing_enabled(False)
-        self.confirm_button.hide()
-        self.redraw_button.hide()
-        self.image_label.update()
-
-    def redraw_line(self):
-        self.image_label.start_orig = None
-        self.image_label.end_orig = None
-        self.image_label.update()
-
-    def update_statusbar(self, factor):
-        zoom_percent = int(factor * 100)
-        self.statusBar().showMessage(f"缩放: {zoom_percent}%")
+    def enable_gradient(self):
+        self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
+        self.btn_confirm.show()
+        self.btn_redraw.show()
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.resize(800, 600)
-    window.show()
+    w = MainWindow()
+    w.resize(1000, 700)
+    w.show()
     sys.exit(app.exec())
