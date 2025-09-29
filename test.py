@@ -28,12 +28,11 @@ class ImageLabel(QLabel):
 
         self.dragging = False
         self.last_mouse_pos = None
-        self.drawing_active = False   # ⭐ 标记：是否正在画线
+        self.drawing_active = False
 
         self.btn_confirm = None
         self.btn_redraw = None
 
-    # ========= 滚动区域查找 =========
     def get_scroll_area(self):
         p = self.parentWidget()
         while p is not None:
@@ -42,7 +41,6 @@ class ImageLabel(QLabel):
             p = p.parentWidget()
         return None
 
-    # ========= 图像加载 =========
     def load_image(self, path):
         pixmap = QPixmap(path)
         if pixmap.isNull():
@@ -63,7 +61,6 @@ class ImageLabel(QLabel):
         self.update()
         self.scale_changed.emit(1.0)
 
-    # ========= 缩放逻辑 =========
     def apply_zoom(self, factor, center=None):
         if not self.pixmap_original:
             return
@@ -110,7 +107,6 @@ class ImageLabel(QLabel):
         else:
             self.apply_zoom(0.8, event.position().toPoint())
 
-    # ========= 绘图交互 =========
     def set_drawing_enabled(self, enabled: bool, mode=None, clear_previous=False):
         self.allow_drawing = enabled
         if mode:
@@ -124,14 +120,11 @@ class ImageLabel(QLabel):
         self.update()
 
     def _snap_angle(self, dx, dy, threshold_deg=1):
-        """角度吸附：dx,dy -> 吸附到水平/竖直"""
         if dx == 0 and dy == 0:
             return (dx, dy)
         ang = math.degrees(math.atan2(dy, dx))
-        # 接近水平 (0° / 180°)
         if abs(ang) < threshold_deg or abs(abs(ang)-180) < threshold_deg:
             return (dx, 0)
-        # 接近竖直 (90° / -90°)
         if abs(abs(ang)-90) < threshold_deg:
             return (0, dy)
         return (dx, dy)
@@ -179,7 +172,6 @@ class ImageLabel(QLabel):
                 self.update()
             self.dragging = False
 
-    # ========= 确认/重画 =========
     def confirm_line(self):
         if self.temp_start and self.temp_end:
             if self.draw_mode == "single":
@@ -200,119 +192,184 @@ class ImageLabel(QLabel):
         self.drawing_active = False
         self.update()
 
-    # ========= 绘制 =========
     def paintEvent(self, event):
-        if not self.pixmap(): return
+        if not self.pixmap():
+            return
         painter = QPainter(self)
-        painter.drawPixmap(0,0,self.pixmap())
-        pen = QPen(self.line_color,2)
+        painter.drawPixmap(0, 0, self.pixmap())
+        pen = QPen(self.line_color, 2)
         painter.setPen(pen)
         for line in self.lines:
-            self._draw_line_with_arrows(painter,line["start"],line["end"])
-            self._draw_length_text(painter,line)
+            self._draw_line_with_arrows(painter, line["start"], line["end"])
+            self._draw_length_text(painter, line)
         for g in self.gradients:
-            self._draw_line_with_arrows(painter,g["start"],g["end"])
-            self._draw_gradient_like(painter,g["start"],g["end"])
-            self._draw_length_text(painter,g)
+            self._draw_line_with_arrows(painter, g["start"], g["end"])
+            self._draw_gradient_like(painter, g["start"], g["end"])
+            self._draw_length_text(painter, g)
         if self.temp_start and self.temp_end:
-            self._draw_line_with_arrows(painter,self.temp_start,self.temp_end)
-            if self.draw_mode=="gradient":
-                self._draw_gradient_like(painter,self.temp_start,self.temp_end)
-            self._draw_length_text(painter,{"start":self.temp_start,"end":self.temp_end,"scale_ratio":None})
+            self._draw_line_with_arrows(painter, self.temp_start, self.temp_end)
+            if self.draw_mode == "gradient":
+                self._draw_gradient_like(painter, self.temp_start, self.temp_end)
+            self._draw_length_text(
+                painter, {"start": self.temp_start, "end": self.temp_end, "scale_ratio": None}
+            )
 
-    def _draw_line_with_arrows(self,painter,start,end,arrow_size=10):
-        sp = QPoint(int(start[0]*self.scale_factor),int(start[1]*self.scale_factor))
-        ep = QPoint(int(end[0]*self.scale_factor),int(end[1]*self.scale_factor))
-        painter.drawLine(sp,ep)
-        dx,dy = ep.x()-sp.x(),ep.y()-sp.y()
-        length = math.hypot(dx,dy) or 1
-        ux,uy=dx/length,dy/length
-        perp1,perp2=(-uy,ux),(uy,-ux)
-        def draw_tip(point,back=False):
-            d=-1 if back else 1
-            bx=point.x()-ux*arrow_size*d
-            by=point.y()-uy*arrow_size*d
-            p1=QPoint(int(bx+perp1[0]*arrow_size*0.5),int(by+perp1[1]*arrow_size*0.5))
-            p2=QPoint(int(bx+perp2[0]*arrow_size*0.5),int(by+perp2[1]*arrow_size*0.5))
-            painter.drawLine(point,p1); painter.drawLine(point,p2)
-        draw_tip(sp,True); draw_tip(ep,False)
+    def _draw_line_with_arrows(self, painter, start, end, arrow_size=10):
+        sp = QPoint(int(start[0]*self.scale_factor), int(start[1]*self.scale_factor))
+        ep = QPoint(int(end[0]*self.scale_factor), int(end[1]*self.scale_factor))
+        painter.drawLine(sp, ep)
+        dx, dy = ep.x()-sp.x(), ep.y()-sp.y()
+        length = math.hypot(dx, dy) or 1
+        ux, uy = dx/length, dy/length
+        perp1, perp2 = (-uy, ux), (uy, -ux)
+        def draw_tip(point, back=False):
+            d = -1 if back else 1
+            bx = point.x()-ux*arrow_size*d
+            by = point.y()-uy*arrow_size*d
+            p1 = QPoint(int(bx+perp1[0]*arrow_size*0.5), int(by+perp1[1]*arrow_size*0.5))
+            p2 = QPoint(int(bx+perp2[0]*arrow_size*0.5), int(by+perp2[1]*arrow_size*0.5))
+            painter.drawLine(point, p1)
+            painter.drawLine(point, p2)
+        draw_tip(sp, True)
+        draw_tip(ep, False)
 
-    def _draw_gradient_like(self,painter,start,end,extend=2000):
-        sp=QPoint(int(start[0]*self.scale_factor),int(start[1]*self.scale_factor))
-        ep=QPoint(int(end[0]*self.scale_factor),int(end[1]*self.scale_factor))
-        dx,dy=ep.x()-sp.x(),ep.y()-sp.y(); length=math.hypot(dx,dy) or 1
-        nx,ny=-dy/length,dx/length
-        a1=sp+QPoint(int(nx*extend),int(ny*extend)); a2=sp-QPoint(int(nx*extend),int(ny*extend))
-        b1=ep+QPoint(int(nx*extend),int(ny*extend)); b2=ep-QPoint(int(nx*extend),int(ny*extend))
-        painter.drawLine(a1,a2); painter.drawLine(b1,b2)
+    def _draw_gradient_like(self, painter, start, end, extend=2000):
+        sp = QPoint(int(start[0]*self.scale_factor), int(start[1]*self.scale_factor))
+        ep = QPoint(int(end[0]*self.scale_factor), int(end[1]*self.scale_factor))
+        dx, dy = ep.x()-sp.x(), ep.y()-sp.y()
+        length = math.hypot(dx, dy) or 1
+        nx, ny = -dy/length, dx/length
+        a1 = sp + QPoint(int(nx*extend), int(ny*extend))
+        a2 = sp - QPoint(int(nx*extend), int(ny*extend))
+        b1 = ep + QPoint(int(nx*extend), int(ny*extend))
+        b2 = ep - QPoint(int(nx*extend), int(ny*extend))
+        painter.drawLine(a1, a2)
+        painter.drawLine(b1, b2)
 
-    def _draw_length_text(self,painter,line):
-        p1,p2=line["start"],line["end"]
-        L=math.dist(p1,p2)
-        txt=f"{L:.1f} px"
-        sp=QPoint(int(p1[0]*self.scale_factor),int(p1[1]*self.scale_factor))
-        ep=QPoint(int(p2[0]*self.scale_factor),int(p2[1]*self.scale_factor))
-        midx=(sp.x()+ep.x())/2; midy=(sp.y()+ep.y())/2
-        painter.drawText(midx+5,midy,txt)
+    def _draw_length_text(self, painter, line):
+        p1, p2 = line["start"], line["end"]
+        L = math.dist(p1, p2)
+        txt = f"{L:.1f} px"
+        sp = QPoint(int(p1[0]*self.scale_factor), int(p1[1]*self.scale_factor))
+        ep = QPoint(int(p2[0]*self.scale_factor), int(p2[1]*self.scale_factor))
+        midx = (sp.x()+ep.x())/2
+        midy = (sp.y()+ep.y())/2
+        painter.drawText(midx+5, midy, txt)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("测量工具 (缩放+箭头+确认+角度吸附)")
-        self.image_label=ImageLabel()
-        self.scroll_area=QScrollArea()
+
+        self.image_loaded = False   # ⭐ 是否已经加载过至少一张图片
+
+        self.image_label = ImageLabel()
+        self.scroll_area = QScrollArea()
         self.scroll_area.setWidget(self.image_label)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm=QPushButton("确认")
-        self.btn_redraw=QPushButton("重画")
+        self.btn_confirm = QPushButton("确认")
+        self.btn_redraw = QPushButton("重画")
         self.btn_confirm.clicked.connect(self.image_label.confirm_line)
         self.btn_redraw.clicked.connect(self.image_label.redraw_line)
-        self.btn_confirm.hide(); self.btn_redraw.hide()
-        self.image_label.btn_confirm=self.btn_confirm; self.image_label.btn_redraw=self.btn_redraw
+        self.btn_confirm.hide()
+        self.btn_redraw.hide()
+        self.image_label.btn_confirm = self.btn_confirm
+        self.image_label.btn_redraw = self.btn_redraw
 
-        bl=QHBoxLayout(); bl.addWidget(self.btn_confirm); bl.addWidget(self.btn_redraw)
-        layout=QVBoxLayout(); layout.addWidget(self.scroll_area); layout.addLayout(bl)
-        c=QWidget(); c.setLayout(layout); self.setCentralWidget(c)
+        # 添加照片按钮
+        self.btn_add_photo = QPushButton("添加照片")
+        self.btn_add_photo.setFixedSize(200, 60)
+        self.btn_add_photo.setStyleSheet("font-size:20px;")
+        self.btn_add_photo.clicked.connect(self.load_image)
 
-        menubar=self.menuBar()
-        fm=menubar.addMenu("文件"); oa=QAction("打开图片",self)
-        oa.triggered.connect(self.load_image); fm.addAction(oa)
+        bl = QHBoxLayout()
+        bl.addWidget(self.btn_confirm)
+        bl.addWidget(self.btn_redraw)
 
-        vm=menubar.addMenu("视图")
-        zai=QAction("放大",self); zai.triggered.connect(lambda:self.image_label.apply_zoom(1.25,self.image_label.rect().center()))
-        zao=QAction("缩小",self); zao.triggered.connect(lambda:self.image_label.apply_zoom(0.8,self.image_label.rect().center()))
-        zr=QAction("还原",self); zr.triggered.connect(self.image_label.reset_zoom)
-        vm.addAction(zai); vm.addAction(zao); vm.addAction(zr)
+        layout = QVBoxLayout()
+        layout.addWidget(self.scroll_area)
+        layout.addLayout(bl)
 
-        mm=menubar.addMenu("测量")
-        sa=QAction("单线测量",self); sa.triggered.connect(self.enable_single)
-        ga=QAction("渐变线测量",self); ga.triggered.connect(self.enable_gradient)
-        mm.addAction(sa); mm.addAction(ga)
+        c = QWidget()
+        c.setLayout(layout)
+        self.setCentralWidget(c)
+
+        # overlay 界面，按钮居中
+        self.overlay = QWidget(self)
+        overlay_layout = QVBoxLayout(self.overlay)
+        overlay_layout.addStretch()
+        overlay_layout.addWidget(self.btn_add_photo, alignment=Qt.AlignCenter)
+        overlay_layout.addStretch()
+        self.overlay.setLayout(overlay_layout)
+        self.overlay.setGeometry(self.rect())
+        self.overlay.show()
+
+        menubar = self.menuBar()
+        fm = menubar.addMenu("文件")
+        oa = QAction("打开图片", self)
+        oa.triggered.connect(self.load_image)
+        fm.addAction(oa)
+
+        vm = menubar.addMenu("视图")
+        zai = QAction("放大", self)
+        zai.triggered.connect(lambda: self.image_label.apply_zoom(1.25, self.image_label.rect().center()))
+        zao = QAction("缩小", self)
+        zao.triggered.connect(lambda: self.image_label.apply_zoom(0.8, self.image_label.rect().center()))
+        zr = QAction("还原", self)
+        zr.triggered.connect(self.image_label.reset_zoom)
+        vm.addAction(zai)
+        vm.addAction(zao)
+        vm.addAction(zr)
+
+        mm = menubar.addMenu("测量")
+        sa = QAction("单线测量", self)
+        sa.triggered.connect(self.enable_single)
+        ga = QAction("渐变线测量", self)
+        ga.triggered.connect(self.enable_gradient)
+        mm.addAction(sa)
+        mm.addAction(ga)
 
         self.statusBar().showMessage("缩放: 100%")
         self.image_label.scale_changed.connect(self.update_statusbar)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.overlay.setGeometry(self.rect())
+
     def load_image(self):
-        file,_=QFileDialog.getOpenFileName(self,"选择图片","","Images (*.png *.jpg *.bmp *.jpeg)")
-        if file:
+        file, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.bmp *.jpeg)")
+        if file:  # 用户选择了文件
             self.image_label.load_image(file)
-            self.btn_confirm.hide(); self.btn_redraw.hide()
+            self.btn_confirm.hide()
+            self.btn_redraw.hide()
+            self.overlay.hide()
+            self.image_loaded = True
+        else:  # 用户取消
+            if not self.image_loaded:
+                self.overlay.show()   # 只在从未加载过图片时，才显示按钮
+            else:
+                self.overlay.hide()   # 已经加载过，就保持隐藏
 
     def enable_single(self):
-        self.image_label.set_drawing_enabled(True,mode="single",clear_previous=True)
-        self.btn_confirm.show(); self.btn_redraw.show()
+        self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
+        self.btn_confirm.show()
+        self.btn_redraw.show()
 
     def enable_gradient(self):
-        self.image_label.set_drawing_enabled(True,mode="gradient",clear_previous=True)
-        self.btn_confirm.show(); self.btn_redraw.show()
+        self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
+        self.btn_confirm.show()
+        self.btn_redraw.show()
 
-    def update_statusbar(self,factor):
+    def update_statusbar(self, factor):
         self.statusBar().showMessage(f"缩放: {int(factor*100)}%")
 
-if __name__=="__main__":
-    app=QApplication(sys.argv)
-    w=MainWindow(); w.resize(1000,700); w.show()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = MainWindow()
+    w.resize(1000, 700)
+    w.show()
     sys.exit(app.exec())
