@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtPrintSupport import QPrinter
-from PySide6.QtGui import QPageSize
+from PySide6.QtGui import QPageSize, QPageLayout
 
 from dialogs import LengthInputDialog
 from utils import snap_angle, point_to_line_distance
@@ -114,8 +114,8 @@ class ImageLabel(QLabel):
         # 创建纸张大小的Pixmap
         # 使用更高的分辨率显示 (每毫米8像素)
         display_scale = 8
-        paper_width = int(self.paper_settings["width_mm"] * display_scale)
-        paper_height = int(self.paper_settings["height_mm"] * display_scale)
+        paper_width = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
+        paper_height = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
         
         # 创建白色背景
         paper_pixmap = QPixmap(paper_width, paper_height)
@@ -124,41 +124,41 @@ class ImageLabel(QLabel):
         if self.pixmap_original:
             # 根据image_scale_factor计算图片显示大小
             # image_scale_factor是毫米/像素，display_scale是像素/毫米（显示时）
-            display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale)
-            display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale)
+            display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
+            display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
             
             # 使用更高的质量缩放
             scaled_image = self.pixmap_original.scaled(display_width, display_height, 
                                                       Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
             # 居中放置
-            self.image_offset = QPoint((paper_width - display_width) // 2, 
-                                      (paper_height - display_height) // 2)
+            image_offset_x = (paper_width - display_width) // 2
+            image_offset_y = (paper_height - display_height) // 2
             
             # 在纸张上绘制图片
             painter = QPainter(paper_pixmap)
             # 设置渲染质量
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            painter.drawPixmap(self.image_offset, scaled_image)
+            painter.drawPixmap(image_offset_x, image_offset_y, scaled_image)
             painter.end()
+            
+            # Update image offset with scaled values
+            self.image_offset = QPoint(image_offset_x, image_offset_y)
         
         # 设置显示
         self.setPixmap(paper_pixmap)
         self.resize(paper_pixmap.size())
-        self.scale_factor = 1.0
 
     def apply_zoom(self, factor, center=None):
-        if not self.pixmap():
+        if not self.pixmap() or not self.pixmap_original:
             return
         old_factor = self.scale_factor
         self.scale_factor *= factor
         self.scale_factor = max(0.1, min(5.0, self.scale_factor))
-        new_w = int(self.pixmap().width() * self.scale_factor / old_factor)
-        new_h = int(self.pixmap().height() * self.scale_factor / old_factor)
-        scaled_pixmap = self.pixmap().scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.setPixmap(scaled_pixmap)
-        self.resize(scaled_pixmap.size())
+        
+        # Update paper display with new scale factor
+        self._update_paper_display()
         self.update()
         if center:
             scroll_area = self.get_scroll_area()
@@ -178,9 +178,11 @@ class ImageLabel(QLabel):
         self.scale_changed.emit(self.scale_factor)
 
     def reset_zoom(self):
-        if not self.pixmap():
+        if not self.pixmap_original:
             return
         self.scale_factor = 1.0
+        # Update paper display at original scale
+        self._update_paper_display()
         self.update()
         self.scale_changed.emit(1.0)
 
@@ -208,15 +210,15 @@ class ImageLabel(QLabel):
         """将屏幕坐标转换为图片坐标（像素单位）"""
         display_scale = 8  # 显示时每毫米8像素
         # 考虑缩放和偏移
-        img_x = (screen_x - self.image_offset.x() * self.scale_factor) / (self.image_scale_factor * display_scale * self.scale_factor)
-        img_y = (screen_y - self.image_offset.y() * self.scale_factor) / (self.image_scale_factor * display_scale * self.scale_factor)
+        img_x = (screen_x - self.image_offset.x()) / (self.image_scale_factor * display_scale * self.scale_factor)
+        img_y = (screen_y - self.image_offset.y()) / (self.image_scale_factor * display_scale * self.scale_factor)
         return (img_x, img_y)
 
     def _image_to_screen_coords(self, img_x, img_y):
         """将图片坐标（像素单位）转换为屏幕坐标"""
         display_scale = 8  # 显示时每毫米8像素
-        screen_x = img_x * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.x() * self.scale_factor
-        screen_y = img_y * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.y() * self.scale_factor
+        screen_x = img_x * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.x()
+        screen_y = img_y * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.y()
         return (screen_x, screen_y)
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -448,23 +450,28 @@ class ImageLabel(QLabel):
             printer.setOutputFormat(QPrinter.PdfFormat)
             printer.setOutputFileName(file_path)
             
-            # 设置纸张大小
+            # 设置纸张大小和方向
+            page_size = None
             if paper_settings["size_name"] == "A4":
-                printer.setPageSize(QPageSize(QPageSize.A4))
+                page_size = QPageSize(QPageSize.A4)
             elif paper_settings["size_name"] == "A3":
-                printer.setPageSize(QPageSize(QPageSize.A3))
+                page_size = QPageSize(QPageSize.A3)
             elif paper_settings["size_name"] == "A5":
-                printer.setPageSize(QPageSize(QPageSize.A5))
+                page_size = QPageSize(QPageSize.A5)
             elif paper_settings["size_name"] == "Letter":
-                printer.setPageSize(QPageSize(QPageSize.Letter))
+                page_size = QPageSize(QPageSize.Letter)
             elif paper_settings["size_name"] == "Legal":
-                printer.setPageSize(QPageSize(QPageSize.Legal))
+                page_size = QPageSize(QPageSize.Legal)
                 
-            # 设置方向
-            if paper_settings["is_portrait"]:
-                printer.setOrientation(QPrinter.Portrait)
+            # 根据方向设置页面大小
+            if not paper_settings["is_portrait"]:
+                # 如果是横向，使用LandscapeOrientation
+                printer.setPageSize(page_size)
+                printer.setPageOrientation(QPageLayout.Landscape)
             else:
-                printer.setOrientation(QPrinter.Landscape)
+                # 默认是纵向
+                printer.setPageSize(page_size)
+                printer.setPageOrientation(QPageLayout.Portrait)
             
             painter = QPainter(printer)
             # 设置渲染质量
