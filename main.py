@@ -260,9 +260,9 @@ class ImageLabel(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("测量工具 (缩放+箭头+确认+角度吸附)")
+        self.setWindowTitle("OpenScaler")
 
-        self.image_loaded = False   # ⭐ 是否已经加载过至少一张图片
+        self.image_loaded = False
 
         self.image_label = ImageLabel()
         self.scroll_area = QScrollArea()
@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
         vm.addAction(zao)
         vm.addAction(zr)
 
-        mm = menubar.addMenu("测量")
+        mm = menubar.addMenu("添加测量")
         sa = QAction("单线测量", self)
         sa.triggered.connect(self.enable_single)
         ga = QAction("渐变线测量", self)
