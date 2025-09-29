@@ -27,13 +27,22 @@ class ImageLabel(QLabel):
         self.dragging = False
         self.last_mouse_pos = None
 
+    def get_scroll_area(self):
+        """向上查找所属的 QScrollArea"""
+        p = self.parentWidget()
+        while p is not None:
+            if isinstance(p, QScrollArea):
+                return p
+            p = p.parentWidget()
+        return None
+
     def load_image(self, path):
         pixmap = QPixmap(path)
         if pixmap.isNull():
             QMessageBox.warning(self, "加载失败", "无法加载图片。")
             return
 
-        # 限制最大尺寸，避免太大撑爆
+        # 限制最大尺寸，避免超大图引发问题
         screen_size = QGuiApplication.primaryScreen().availableSize()
         max_w, max_h = int(screen_size.width() * 0.8), int(screen_size.height() * 0.8)
         if pixmap.width() > max_w or pixmap.height() > max_h:
@@ -57,7 +66,6 @@ class ImageLabel(QLabel):
             self.lines.clear()
         self.update()
 
-
     def apply_zoom(self, factor, center=None):
         if not self.pixmap_original:
             return
@@ -66,41 +74,38 @@ class ImageLabel(QLabel):
         self.scale_factor *= factor
         self.scale_factor = max(0.1, min(5.0, self.scale_factor))
 
-        # 缩放后的 QPixmap
         new_w = int(self.pixmap_original.width() * self.scale_factor)
         new_h = int(self.pixmap_original.height() * self.scale_factor)
-        scaled_pixmap = self.pixmap_original.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled_pixmap = self.pixmap_original.scaled(
+            new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
         self.setPixmap(scaled_pixmap)
         self.resize(scaled_pixmap.size())
         self.update()
 
-        # 关键部分：保持鼠标为缩放中心
         if center:
-            # 获取 QScrollArea
-            scroll_area = self.parentWidget()
-            if scroll_area and scroll_area.parentWidget():
-                scroll_area = scroll_area.parentWidget()
-
+            scroll_area = self.get_scroll_area()
+            if scroll_area:
                 hbar = scroll_area.horizontalScrollBar()
                 vbar = scroll_area.verticalScrollBar()
 
-                # 视口左上角在内容中的位置
+                # 视口左上角在内容中的偏移
                 offset_x = hbar.value()
                 offset_y = vbar.value()
 
-                # 鼠标位置相对于视口的坐标
+                # 鼠标在视口中的位置
                 view_x = center.x()
                 view_y = center.y()
 
-                # 鼠标在内容中的坐标（缩放前）
+                # 鼠标在原始图像中的逻辑坐标（缩放前）
                 content_x = (offset_x + view_x) / old_factor
                 content_y = (offset_y + view_y) / old_factor
 
-                # 缩放后，内容坐标对应到新位置
+                # 缩放后对应坐标
                 new_content_x = content_x * self.scale_factor
                 new_content_y = content_y * self.scale_factor
 
-                # 让缩放点保持在原视口位置
+                # 设置滚动条以保持缩放点位置不变
                 hbar.setValue(int(new_content_x - view_x))
                 vbar.setValue(int(new_content_y - view_y))
 
@@ -152,12 +157,14 @@ class ImageLabel(QLabel):
             self.update()
         elif self.dragging and self.last_mouse_pos:
             delta = event.globalPosition().toPoint() - self.last_mouse_pos
-            self.parentWidget().horizontalScrollBar().setValue(
-                self.parentWidget().horizontalScrollBar().value() - delta.x()
-            )
-            self.parentWidget().verticalScrollBar().setValue(
-                self.parentWidget().verticalScrollBar().value() - delta.y()
-            )
+            scroll_area = self.get_scroll_area()
+            if scroll_area:
+                scroll_area.horizontalScrollBar().setValue(
+                    scroll_area.horizontalScrollBar().value() - delta.x()
+                )
+                scroll_area.verticalScrollBar().setValue(
+                    scroll_area.verticalScrollBar().value() - delta.y()
+                )
             self.last_mouse_pos = event.globalPosition().toPoint()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -206,14 +213,12 @@ class ImageLabel(QLabel):
         pen = QPen(self.line_color, 2)
         painter.setPen(pen)
 
-        # 已确认的线
         for line in self.lines:
             sp = QPoint(int(line["start"][0] * self.scale_factor), int(line["start"][1] * self.scale_factor))
             ep = QPoint(int(line["end"][0] * self.scale_factor), int(line["end"][1] * self.scale_factor))
             painter.drawLine(sp, ep)
             self._draw_length_text(painter, sp, ep, line)
 
-        # 临时线
         if self.start_orig and self.end_orig:
             sp = QPoint(int(self.start_orig[0] * self.scale_factor), int(self.start_orig[1] * self.scale_factor))
             ep = QPoint(int(self.end_orig[0] * self.scale_factor), int(self.end_orig[1] * self.scale_factor))
@@ -237,7 +242,7 @@ class ImageLabel(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("图片缩放工具")
+        self.setWindowTitle("图片测量工具（滚轮缩放 + 鼠标拖动）")
         self.image_label = ImageLabel()
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidget(self.image_label)
@@ -322,7 +327,6 @@ class MainWindow(QMainWindow):
                 self.setGeometry(geo)
 
     def zoom_via_menu(self, factor):
-        # 菜单缩放：以图片中心为基准
         center_point = self.image_label.rect().center()
         self.image_label.apply_zoom(factor, center_point)
 
