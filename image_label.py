@@ -277,18 +277,18 @@ class ImageLabel(QLabel):
             
         click_pos = event.position().toPoint()
         
-        # 检查是否双击了任何一条线
+        # 检查是否双击了任何一条线 (扩大识别区域到15像素)
         for i, line in enumerate(self.lines):
-            if self._is_point_near_line(click_pos, line):
+            if self._is_point_near_line(click_pos, line, tolerance=15):
                 self._open_length_dialog(i, "line", line)
                 return
                 
         for i, gradient in enumerate(self.gradients):
-            if self._is_point_near_line(click_pos, gradient):
+            if self._is_point_near_line(click_pos, gradient, tolerance=15):
                 self._open_length_dialog(i, "gradient", gradient)
                 return
 
-    def _is_point_near_line(self, point, line):
+    def _is_point_near_line(self, point, line, tolerance=15):
         """检查点是否在线附近"""
         start = line["start"]
         end = line["end"]
@@ -302,7 +302,7 @@ class ImageLabel(QLabel):
         
         # 计算点到线段的距离
         distance = point_to_line_distance(point, sp, ep)
-        return distance <= 5  # 5像素的容差范围
+        return distance <= tolerance  # 扩大容差范围
 
     def _open_length_dialog(self, index, line_type, line):
         """打开对话框输入实际长度"""
@@ -393,20 +393,27 @@ class ImageLabel(QLabel):
         painter.drawPixmap(0, 0, self.pixmap())
         pen = QPen(self.line_color, 2)
         painter.setPen(pen)
+        
+        # 绘制已完成的线条（只显示设置了实际长度的线条）
         for line in self.lines:
             self._draw_line_with_arrows(painter, line["start"], line["end"])
-            self._draw_length_text(painter, line)
+            # 只有设置了实际长度才显示文本
+            if "real_length" in line:
+                self._draw_length_text(painter, line)
+                
         for g in self.gradients:
             self._draw_line_with_arrows(painter, g["start"], g["end"])
             self._draw_gradient_like(painter, g["start"], g["end"])
-            self._draw_length_text(painter, g)
+            # 只有设置了实际长度才显示文本
+            if "real_length" in g:
+                self._draw_length_text(painter, g)
+                
+        # 绘制临时线条（不显示长度）
         if self.temp_start and self.temp_end:
             self._draw_line_with_arrows(painter, self.temp_start, self.temp_end)
             if self.draw_mode == "gradient":
                 self._draw_gradient_like(painter, self.temp_start, self.temp_end)
-            self._draw_length_text(
-                painter, {"start": self.temp_start, "end": self.temp_end, "scale_ratio": None}
-            )
+            # 临时线条不显示长度文本
         painter.end()
 
     def _draw_line_with_arrows(self, painter, start, end, arrow_size=10):
@@ -453,14 +460,12 @@ class ImageLabel(QLabel):
 
     def _draw_length_text(self, painter, line):
         p1, p2 = line["start"], line["end"]
-        # 显示文本逻辑：如果设置了实际长度，则显示实际长度，否则显示像素长度
+        # 显示文本逻辑：只显示设置了实际长度的线条
         if "real_length" in line:
             txt = f"{line['real_length']:.2f} mm"
         else:
-            # 计算实际长度（像素长度 * 每像素代表的毫米数）
-            pixel_length = math.dist(p1, p2)
-            real_length = pixel_length * self.image_scale_factor
-            txt = f"{real_length:.2f} mm"
+            # 如果没有设置实际长度，不显示文本
+            return
             
         # 考虑图片在纸张上的偏移和缩放
         display_scale = 8  # 显示时每毫米8像素
