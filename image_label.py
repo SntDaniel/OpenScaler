@@ -308,19 +308,38 @@ class ImageLabel(QLabel):
         """打开对话框输入实际长度"""
         dialog = LengthInputDialog(self)
         if "real_length" in line:
-            dialog.set_length(str(line["real_length"]))
+            # 从存储的值中提取数值和单位
+            real_length_mm = line["real_length"]
+            original_value = line.get("original_value", real_length_mm)
+            original_unit = line.get("original_unit", "mm")
+            dialog.set_length(str(original_value))
+            dialog.set_unit(original_unit)
         if dialog.exec() == QDialog.Accepted:
             try:
-                real_length = float(dialog.get_length())
+                # 获取输入的数值和单位
+                length_value = float(dialog.get_length())
+                unit = dialog.get_unit()
+                
+                # 转换为毫米
+                real_length_mm = length_value
+                if unit == "cm":
+                    real_length_mm = length_value * 10
+                elif unit == "inch":
+                    real_length_mm = length_value * 25.4
+                
                 # 更新线的数据
                 if line_type == "line":
-                    self.lines[index]["real_length"] = real_length
+                    self.lines[index]["real_length"] = real_length_mm
+                    self.lines[index]["original_value"] = length_value
+                    self.lines[index]["original_unit"] = unit
                     # 根据实际长度调整图片缩放
-                    self._adjust_image_scale(line, real_length)
+                    self._adjust_image_scale(line, real_length_mm)
                 else:
-                    self.gradients[index]["real_length"] = real_length
+                    self.gradients[index]["real_length"] = real_length_mm
+                    self.gradients[index]["original_value"] = length_value
+                    self.gradients[index]["original_unit"] = unit
                     # 根据实际长度调整图片缩放
-                    self._adjust_image_scale(line, real_length)
+                    self._adjust_image_scale(line, real_length_mm)
                 self.update()
             except ValueError:
                 QMessageBox.warning(self, "输入错误", "请输入有效的数字")
@@ -369,16 +388,30 @@ class ImageLabel(QLabel):
         dialog = LengthInputDialog(self)
         if dialog.exec() == QDialog.Accepted:
             try:
-                real_length = float(dialog.get_length())
+                # 获取输入的数值和单位
+                length_value = float(dialog.get_length())
+                unit = dialog.get_unit()
+                
+                # 转换为毫米
+                real_length_mm = length_value
+                if unit == "cm":
+                    real_length_mm = length_value * 10
+                elif unit == "inch":
+                    real_length_mm = length_value * 25.4
+                
                 # 更新线的数据
                 if line_type == "line":
-                    self.lines[index]["real_length"] = real_length
+                    self.lines[index]["real_length"] = real_length_mm
+                    self.lines[index]["original_value"] = length_value
+                    self.lines[index]["original_unit"] = unit
                     # 根据实际长度调整图片缩放
-                    self._adjust_image_scale(line, real_length)
+                    self._adjust_image_scale(line, real_length_mm)
                 else:
-                    self.gradients[index]["real_length"] = real_length
+                    self.gradients[index]["real_length"] = real_length_mm
+                    self.gradients[index]["original_value"] = length_value
+                    self.gradients[index]["original_unit"] = unit
                     # 根据实际长度调整图片缩放
-                    self._adjust_image_scale(line, real_length)
+                    self._adjust_image_scale(line, real_length_mm)
                 self.update()
             except ValueError:
                 QMessageBox.warning(self, "输入错误", "请输入有效的数字")
@@ -461,7 +494,11 @@ class ImageLabel(QLabel):
     def _draw_length_text(self, painter, line):
         p1, p2 = line["start"], line["end"]
         # 显示文本逻辑：只显示设置了实际长度的线条
-        if "real_length" in line:
+        if "real_length" in line and "original_value" in line and "original_unit" in line:
+            # 使用用户输入的原始值和单位显示
+            txt = f"{line['original_value']:.2f} {line['original_unit']}"
+        elif "real_length" in line:
+            # 如果没有原始值信息，则显示转换后的毫米值
             txt = f"{line['real_length']:.2f} mm"
         else:
             # 如果没有设置实际长度，不显示文本

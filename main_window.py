@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm = QPushButton("确认")
+        self.btn_confirm = QPushButton("确认画线")
         self.btn_confirm.clicked.connect(self.image_label.confirm_line)
         self.btn_confirm.hide()
         self.image_label.btn_confirm = self.btn_confirm
