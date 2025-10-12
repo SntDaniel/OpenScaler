@@ -340,19 +340,48 @@ class ImageLabel(QLabel):
         
         # 重新显示图片
         self._update_paper_display()
+        
+        # 显示状态消息
+        self.window().statusBar().showMessage(f"图片已根据参考长度调整缩放: 1像素 = {new_scale:.4f}毫米")
 
     def confirm_line(self):
+        """确认线条并自动弹出长度输入框"""
         if self.temp_start and self.temp_end:
+            new_line = {"start": self.temp_start, "end": self.temp_end, "scale_ratio": None}
             if self.draw_mode == "single":
-                self.lines.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": None})
+                self.lines.append(new_line)
+                # 自动打开长度输入对话框
+                self._open_length_dialog_for_new_line(len(self.lines) - 1, "line", new_line)
             elif self.draw_mode == "gradient":
-                self.gradients.append({"start": self.temp_start, "end": self.temp_end, "scale_ratio": None})
+                self.gradients.append(new_line)
+                # 自动打开长度输入对话框
+                self._open_length_dialog_for_new_line(len(self.gradients) - 1, "gradient", new_line)
         self.temp_start = None
         self.temp_end = None
         self.allow_drawing = False
         self.drawing_active = False
         self.update()
-        if self.btn_confirm: self.btn_confirm.hide()
+        if self.btn_confirm: 
+            self.btn_confirm.hide()
+
+    def _open_length_dialog_for_new_line(self, index, line_type, line):
+        """为新添加的线条打开长度输入对话框"""
+        dialog = LengthInputDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            try:
+                real_length = float(dialog.get_length())
+                # 更新线的数据
+                if line_type == "line":
+                    self.lines[index]["real_length"] = real_length
+                    # 根据实际长度调整图片缩放
+                    self._adjust_image_scale(line, real_length)
+                else:
+                    self.gradients[index]["real_length"] = real_length
+                    # 根据实际长度调整图片缩放
+                    self._adjust_image_scale(line, real_length)
+                self.update()
+            except ValueError:
+                QMessageBox.warning(self, "输入错误", "请输入有效的数字")
 
     def paintEvent(self, event):
         if not self.pixmap():
