@@ -1,4 +1,4 @@
-# 包含 MainWindow 类，负责主界面布局和菜单
+# main_window.py
 # 包含 MainWindow 类，负责主界面布局和菜单
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QPushButton,
@@ -100,9 +100,28 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm = QPushButton("确认画线")
-        self.btn_confirm.clicked.connect(self.image_label.confirm_line)
+        self.btn_confirm = QPushButton("确认")
+        self.btn_confirm.clicked.connect(self.confirm_action)
         self.btn_confirm.hide()
+        # 设置按钮样式：加大尺寸和美化外观
+        self.btn_confirm.setFixedSize(120, 40)  # 设置固定大小
+        self.btn_confirm.setStyleSheet("""
+            QPushButton {
+                background-color: #007acc;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004a8c;
+            }
+        """)
         self.image_label.btn_confirm = self.btn_confirm
 
         # 添加照片按钮
@@ -111,12 +130,16 @@ class MainWindow(QMainWindow):
         self.btn_add_photo.setStyleSheet("font-size:20px;")
         self.btn_add_photo.clicked.connect(self.load_image)
 
-        bl = QHBoxLayout()
-        bl.addWidget(self.btn_confirm)
+        # 创建一个容器用于放置确认按钮
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.addWidget(self.btn_confirm)
+        button_layout.setAlignment(Qt.AlignCenter)
+        button_layout.setContentsMargins(0, 0, 0, 20)  # 底部留出一些边距
 
         layout = QVBoxLayout()
         layout.addWidget(self.scroll_area)
-        layout.addLayout(bl)
+        layout.addWidget(button_container)
 
         c = QWidget()
         c.setLayout(layout)
@@ -180,6 +203,11 @@ class MainWindow(QMainWindow):
     def load_image(self):
         file, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.bmp *.jpeg)")
         if file:  # 用户选择了文件
+            # 在加载前重置拖动状态
+            self.image_label.dragging = False
+            self.image_label.image_drag_mode = False
+            self.btn_confirm.hide()
+            
             self.image_label.load_image_on_paper(file, self.paper_settings)
             self.btn_confirm.hide()
             self.overlay.hide()
@@ -189,14 +217,30 @@ class MainWindow(QMainWindow):
                 self.overlay.show()   # 只在从未加载过图片时，才显示按钮
             else:
                 self.overlay.hide()   # 已经加载过，就保持隐藏
+                # 确保拖动模式未激活
+                self.image_label.dragging = False
+                self.image_label.image_drag_mode = False
+                self.btn_confirm.hide()
 
     def enable_single(self):
         self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
         self.btn_confirm.show()
+        self.btn_confirm.setText("确认画线")
 
     def enable_gradient(self):
         self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
         self.btn_confirm.show()
+        self.btn_confirm.setText("确认画线")
+
+    def confirm_action(self):
+        """根据当前模式确认不同的操作"""
+        if self.image_label.allow_drawing:
+            # 如果是绘图模式，确认线条
+            self.image_label.confirm_line()
+        else:
+            # 如果是拖动模式，确认拖动
+            self.image_label.confirm_drag()
+        self.btn_confirm.hide()
 
     def update_statusbar(self, factor):
         self.statusBar().showMessage(f"缩放: {int(factor*100)}%")
