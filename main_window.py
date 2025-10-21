@@ -104,6 +104,12 @@ class MainWindow(QMainWindow):
         self.btn_confirm.clicked.connect(self.image_label.confirm_line)
         self.btn_confirm.hide()
         self.image_label.btn_confirm = self.btn_confirm
+        
+        # 添加图片移动确认按钮
+        self.btn_confirm_move = QPushButton("确认移动")
+        self.btn_confirm_move.clicked.connect(self.confirm_image_move)
+        self.btn_confirm_move.hide()
+        self.image_label.btn_confirm_move = self.btn_confirm_move
 
         # 添加照片按钮
         self.btn_add_photo = QPushButton("添加照片")
@@ -113,6 +119,7 @@ class MainWindow(QMainWindow):
 
         bl = QHBoxLayout()
         bl.addWidget(self.btn_confirm)
+        bl.addWidget(self.btn_confirm_move)
 
         layout = QVBoxLayout()
         layout.addWidget(self.scroll_area)
@@ -167,6 +174,13 @@ class MainWindow(QMainWindow):
         ga.triggered.connect(self.enable_gradient)
         mm.addAction(sa)
         mm.addAction(ga)
+        
+        # 添加编辑菜单
+        edit_menu = menubar.addMenu("编辑")
+        self.image_move_action = QAction("移动图片", self)
+        self.image_move_action.setCheckable(True)
+        self.image_move_action.triggered.connect(self.toggle_image_move)
+        edit_menu.addAction(self.image_move_action)
 
         self.statusBar().showMessage("缩放: 100%")
         self.image_label.scale_changed.connect(self.update_statusbar)
@@ -182,6 +196,7 @@ class MainWindow(QMainWindow):
         if file:  # 用户选择了文件
             self.image_label.load_image_on_paper(file, self.paper_settings)
             self.btn_confirm.hide()
+            self.btn_confirm_move.hide()
             self.overlay.hide()
             self.image_loaded = True
         else:  # 用户取消
@@ -193,10 +208,12 @@ class MainWindow(QMainWindow):
     def enable_single(self):
         self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
         self.btn_confirm.show()
+        self.btn_confirm_move.hide()
 
     def enable_gradient(self):
         self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
         self.btn_confirm.show()
+        self.btn_confirm_move.hide()
 
     def update_statusbar(self, factor):
         self.statusBar().showMessage(f"缩放: {int(factor*100)}%")
@@ -232,3 +249,22 @@ class MainWindow(QMainWindow):
             else:
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "导出失败", "导出PDF时发生错误")
+                
+    def toggle_image_move(self, checked):
+        """切换图片移动模式"""
+        self.image_label.set_image_move_mode(checked)
+        if checked:
+            self.btn_confirm_move.show()
+            self.btn_confirm.hide()
+            self.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
+        else:
+            self.btn_confirm_move.hide()
+            self.statusBar().showMessage("已退出图片移动模式")
+
+    def confirm_image_move(self):
+        """确认图片移动"""
+        # 退出移动模式
+        self.image_move_action.setChecked(False)
+        self.image_label.set_image_move_mode(False)
+        self.btn_confirm_move.hide()
+        self.statusBar().showMessage("图片移动已完成")

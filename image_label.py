@@ -3,7 +3,7 @@ import math
 from PySide6.QtWidgets import (
     QLabel, QMessageBox, QDialog, QScrollArea
 )
-from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication
+from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication, QCursor
 from PySide6.QtCore import Qt, QPoint, Signal, QRectF
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtGui import QPageSize, QPageLayout
@@ -34,6 +34,7 @@ class ImageLabel(QLabel):
         self.drawing_active = False
 
         self.btn_confirm = None
+        self.btn_confirm_move = None
         
         # 纸张设置
         self.paper_settings = {
@@ -46,6 +47,12 @@ class ImageLabel(QLabel):
         # 图片在纸张上的缩放因子 (毫米/像素)
         self.image_scale_factor = 1.0  # 默认1.0毫米/像素
         self.image_offset = QPoint(0, 0)  # 图片在纸张上的偏移
+        
+        # 图片移动相关属性
+        self.image_move_mode = False
+        self.image_dragging = False
+        self.image_drag_start_pos = None
+        self.original_image_offset = None
 
     def set_paper_settings(self, settings):
         """设置纸张参数"""
@@ -131,51 +138,81 @@ class ImageLabel(QLabel):
             scaled_image = self.pixmap_original.scaled(display_width, display_height, 
                                                       Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
-            # 居中放置
-            image_offset_x = (paper_width - display_width) // 2
-            image_offset_y = (paper_height - display_height) // 2
-            
-            # 在纸张上绘制图片
+            # 在纸张上绘制图片（使用当前的image_offset）
             painter = QPainter(paper_pixmap)
             # 设置渲染质量
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            painter.drawPixmap(image_offset_x, image_offset_y, scaled_image)
+            painter.drawPixmap(self.image_offset.x(), self.image_offset.y(), scaled_image)
             painter.end()
-            
-            # Update image offset with scaled values
-            self.image_offset = QPoint(image_offset_x, image_offset_y)
         
         # 设置显示
         self.setPixmap(paper_pixmap)
         self.resize(paper_pixmap.size())
-
-    def apply_zoom(self, factor, center=None):
+    def apply_zoom(self, factor, mouse_pos=None):
+        """缩放纸张+图片，智能选择缩放锚点"""
         if not self.pixmap() or not self.pixmap_original:
             return
+
         old_factor = self.scale_factor
         self.scale_factor *= factor
-        self.scale_factor = max(0.1, min(5.0, self.scale_factor))
-        
-        # Update paper display with new scale factor
-        self._update_paper_display()
-        self.update()
-        if center:
-            scroll_area = self.get_scroll_area()
-            if scroll_area:
-                hbar = scroll_area.horizontalScrollBar()
-                vbar = scroll_area.verticalScrollBar()
-                offset_x = hbar.value()
-                offset_y = vbar.value()
-                view_x = center.x()
-                view_y = center.y()
-                content_x = (offset_x + view_x) / old_factor
-                content_y = (offset_y + view_y) / old_factor
-                new_x = content_x * self.scale_factor
-                new_y = content_y * self.scale_factor
-                hbar.setValue(int(new_x - view_x))
-                vbar.setValue(int(new_y - view_y))
+        self.scale_factor = max(0.05, min(5.0, self.scale_factor))  # 最小0.05防止消失
+
+        scroll_area = self.get_scroll_area()
+        if scroll_area:
+            hbar = scroll_area.horizontalScrollBar()
+            vbar = scroll_area.verticalScrollBar()
+            viewport_w = scroll_area.viewport().width()
+            viewport_h = scroll_area.viewport().height()
+
+            # 纸张当前显示大小
+            display_scale = 8
+            paper_w = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
+            paper_h = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
+
+            # 判断纸张是否小于可视区域
+            if paper_w <= viewport_w or paper_h <= viewport_h:
+                # 以鼠标为缩放锚点
+                if mouse_pos is None:
+                    mouse_pos = QPoint(viewport_w // 2, viewport_h // 2)
+                # 计算鼠标在纸张上的相对位置比例
+                rel_x = (mouse_pos.x() + hbar.value()) / (paper_w / factor)
+                rel_y = (mouse_pos.y() + vbar.value()) / (paper_h / factor)
+
+                # 更新显示
+                self._update_paper_display()
+                self.update()
+
+                # 滚动条调整，使鼠标点保持在同一位置
+                hbar.setValue(int(rel_x * paper_w - mouse_pos.x()))
+                vbar.setValue(int(rel_y * paper_h - mouse_pos.y()))
+            else:
+                # 以可视区域中心为锚点
+                view_center_x = hbar.value() + viewport_w // 2
+                view_center_y = vbar.value() + viewport_h // 2
+                scale_change = self.scale_factor / old_factor
+
+                # 更新显示
+                self._update_paper_display()
+                self.update()
+
+                hbar.setValue(int(view_center_x * scale_change - viewport_w // 2))
+                vbar.setValue(int(view_center_y * scale_change - viewport_h // 2))
+        else:
+            self._update_paper_display()
+            self.update()
+
         self.scale_changed.emit(self.scale_factor)
+
+
+    def wheelEvent(self, event):
+        if not self.pixmap():
+            return
+        pos = event.position().toPoint()
+        if event.angleDelta().y() > 0:
+            self.apply_zoom(1.25, pos)
+        else:
+            self.apply_zoom(0.8, pos)
 
     def reset_zoom(self):
         if not self.pixmap_original:
@@ -186,13 +223,7 @@ class ImageLabel(QLabel):
         self.update()
         self.scale_changed.emit(1.0)
 
-    def wheelEvent(self, event):
-        if not self.pixmap():
-            return
-        if event.angleDelta().y() > 0:
-            self.apply_zoom(1.25, event.position().toPoint())
-        else:
-            self.apply_zoom(0.8, event.position().toPoint())
+
 
     def set_drawing_enabled(self, enabled: bool, mode=None, clear_previous=False):
         self.allow_drawing = enabled
@@ -205,6 +236,15 @@ class ImageLabel(QLabel):
         self.temp_end = None
         self.drawing_active = False
         self.update()
+
+    def set_image_move_mode(self, enabled: bool):
+        """设置图片移动模式"""
+        self.image_move_mode = enabled
+        if enabled:
+            self.setCursor(Qt.OpenHandCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+            self.image_dragging = False
 
     def _screen_to_image_coords(self, screen_x, screen_y):
         """将屏幕坐标转换为图片坐标（像素单位）"""
@@ -221,13 +261,46 @@ class ImageLabel(QLabel):
         screen_y = img_y * self.image_scale_factor * display_scale * self.scale_factor + self.image_offset.y()
         return (screen_x, screen_y)
 
+    def _is_point_on_image(self, point):
+        """检查点是否在图片区域内"""
+        if not self.pixmap_original:
+            return False
+            
+        # 获取图片在屏幕上的边界
+        display_scale = 8
+        display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
+        display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
+        
+        image_rect = QRectF(
+            self.image_offset.x(),
+            self.image_offset.y(),
+            display_width,
+            display_height
+        )
+        
+        return image_rect.contains(point.x(), point.y())
+
     def mousePressEvent(self, event: QMouseEvent):
-        if not self.pixmap() or not self.allow_drawing:
-            if event.button() == Qt.LeftButton:
+        if not self.pixmap():
+            return
+            
+        if event.button() == Qt.LeftButton:
+            # 检查是否在图片移动模式下
+            if self.image_move_mode:
+                # 检查点击是否在图片区域内
+                if self._is_point_on_image(event.position().toPoint()):
+                    self.image_dragging = True
+                    self.image_drag_start_pos = event.position().toPoint()
+                    self.original_image_offset = QPoint(self.image_offset.x(), self.image_offset.y())
+                    self.setCursor(Qt.ClosedHandCursor)
+                return
+                
+            # 检查是否允许绘图
+            if not self.allow_drawing:
                 self.dragging = True
                 self.last_mouse_pos = event.globalPosition().toPoint()
-            return
-        if event.button() == Qt.LeftButton:
+                return
+                
             pos = event.position().toPoint()
             # 转换为相对于图片的坐标（以原始图片像素为单位）
             img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
@@ -237,6 +310,14 @@ class ImageLabel(QLabel):
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        if self.image_dragging and self.image_move_mode:
+            # 移动图片
+            delta = event.position().toPoint() - self.image_drag_start_pos
+            self.image_offset = self.original_image_offset + delta
+            self._update_paper_display()
+            self.update()
+            return
+            
         if self.temp_start and self.allow_drawing and self.drawing_active:
             pos = event.position().toPoint()
             # 转换为相对于图片的坐标（以原始图片像素为单位）
@@ -257,6 +338,11 @@ class ImageLabel(QLabel):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
+            if self.image_dragging:
+                self.image_dragging = False
+                self.setCursor(Qt.OpenHandCursor)
+                return
+                
             if self.allow_drawing and self.temp_start and self.drawing_active:
                 pos = event.position().toPoint()
                 # 转换为相对于图片的坐标（以原始图片像素为单位）
