@@ -1,3 +1,4 @@
+# image_label.py
 # 包含 ImageLabel 类，负责图像显示和绘制功能
 import math
 from PySide6.QtWidgets import (
@@ -52,7 +53,7 @@ class ImageLabel(QLabel):
         self.image_move_mode = False
         self.image_dragging = False
         self.image_drag_start_pos = None
-        self.original_image_offset = None
+        self.original_image_offset = QPoint(0, 0)  # 初始化为QPoint对象
 
     def set_paper_settings(self, settings):
         """设置纸张参数"""
@@ -149,6 +150,7 @@ class ImageLabel(QLabel):
         # 设置显示
         self.setPixmap(paper_pixmap)
         self.resize(paper_pixmap.size())
+
     def apply_zoom(self, factor, mouse_pos=None):
         """缩放纸张+图片，智能选择缩放锚点"""
         if not self.pixmap() or not self.pixmap_original:
@@ -169,41 +171,76 @@ class ImageLabel(QLabel):
             display_scale = 8
             paper_w = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
             paper_h = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
+            
+            # 图片当前显示大小
+            display_width = 0
+            display_height = 0
+            if self.pixmap_original:
+                display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
+                display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
 
             # 判断纸张是否小于可视区域
             if paper_w <= viewport_w or paper_h <= viewport_h:
                 # 以鼠标为缩放锚点
                 if mouse_pos is None:
                     mouse_pos = QPoint(viewport_w // 2, viewport_h // 2)
-                # 计算鼠标在纸张上的相对位置比例
-                rel_x = (mouse_pos.x() + hbar.value()) / (paper_w / factor)
-                rel_y = (mouse_pos.y() + vbar.value()) / (paper_h / factor)
+                
+                # 计算缩放前的锚点相对于图片的位置
+                anchor_x_ratio = 0.5
+                anchor_y_ratio = 0.5
+                
+                if old_factor != 0:
+                    # 计算锚点在图片中的相对位置
+                    old_paper_w = int(self.paper_settings["width_mm"] * display_scale * old_factor)
+                    old_paper_h = int(self.paper_settings["height_mm"] * display_scale * old_factor)
+                    
+                    # 锚点相对于纸张的位置
+                    anchor_x_ratio = (mouse_pos.x() + hbar.value()) / old_paper_w if old_paper_w != 0 else 0.5
+                    anchor_y_ratio = (mouse_pos.y() + vbar.value()) / old_paper_h if old_paper_h != 0 else 0.5
 
                 # 更新显示
                 self._update_paper_display()
                 self.update()
-
-                # 滚动条调整，使鼠标点保持在同一位置
-                hbar.setValue(int(rel_x * paper_w - mouse_pos.x()))
-                vbar.setValue(int(rel_y * paper_h - mouse_pos.y()))
+                
+                # 计算新的滚动位置以保持锚点位置
+                new_paper_w = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
+                new_paper_h = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
+                
+                new_h_value = int(anchor_x_ratio * new_paper_w - mouse_pos.x())
+                new_v_value = int(anchor_y_ratio * new_paper_h - mouse_pos.y())
+                
+                hbar.setValue(max(0, new_h_value))
+                vbar.setValue(max(0, new_v_value))
             else:
                 # 以可视区域中心为锚点
                 view_center_x = hbar.value() + viewport_w // 2
                 view_center_y = vbar.value() + viewport_h // 2
-                scale_change = self.scale_factor / old_factor
+                
+                # 计算视图中心相对于纸张的比例
+                old_paper_w = int(self.paper_settings["width_mm"] * display_scale * old_factor)
+                old_paper_h = int(self.paper_settings["height_mm"] * display_scale * old_factor)
+                
+                center_x_ratio = view_center_x / old_paper_w if old_paper_w != 0 else 0.5
+                center_y_ratio = view_center_y / old_paper_h if old_paper_h != 0 else 0.5
 
                 # 更新显示
                 self._update_paper_display()
                 self.update()
 
-                hbar.setValue(int(view_center_x * scale_change - viewport_w // 2))
-                vbar.setValue(int(view_center_y * scale_change - viewport_h // 2))
+                # 计算新的滚动位置以保持视图中心
+                new_paper_w = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
+                new_paper_h = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
+                
+                new_h_value = int(center_x_ratio * new_paper_w - viewport_w // 2)
+                new_v_value = int(center_y_ratio * new_paper_h - viewport_h // 2)
+                
+                hbar.setValue(max(0, new_h_value))
+                vbar.setValue(max(0, new_v_value))
         else:
             self._update_paper_display()
             self.update()
 
         self.scale_changed.emit(self.scale_factor)
-
 
     def wheelEvent(self, event):
         if not self.pixmap():
@@ -222,8 +259,6 @@ class ImageLabel(QLabel):
         self._update_paper_display()
         self.update()
         self.scale_changed.emit(1.0)
-
-
 
     def set_drawing_enabled(self, enabled: bool, mode=None, clear_previous=False):
         self.allow_drawing = enabled
@@ -291,6 +326,7 @@ class ImageLabel(QLabel):
                 if self._is_point_on_image(event.position().toPoint()):
                     self.image_dragging = True
                     self.image_drag_start_pos = event.position().toPoint()
+                    # 确保 original_image_offset 已初始化
                     self.original_image_offset = QPoint(self.image_offset.x(), self.image_offset.y())
                     self.setCursor(Qt.ClosedHandCursor)
                 return
@@ -341,8 +377,9 @@ class ImageLabel(QLabel):
             if self.image_dragging:
                 self.image_dragging = False
                 self.setCursor(Qt.OpenHandCursor)
+                # 确认新的图片位置
+                self.original_image_offset = QPoint(self.image_offset.x(), self.image_offset.y())
                 return
-                
             if self.allow_drawing and self.temp_start and self.drawing_active:
                 pos = event.position().toPoint()
                 # 转换为相对于图片的坐标（以原始图片像素为单位）
