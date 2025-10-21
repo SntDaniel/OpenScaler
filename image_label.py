@@ -1,11 +1,10 @@
-# image_label.py
 # 包含 ImageLabel 类，负责图像显示和绘制功能
 import math
 from PySide6.QtWidgets import (
     QLabel, QMessageBox, QDialog, QScrollArea
 )
 from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication
-from PySide6.QtCore import Qt, QPoint, Signal, QRectF, QTimer
+from PySide6.QtCore import Qt, QPoint, Signal, QRectF
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtGui import QPageSize, QPageLayout
 
@@ -47,13 +46,6 @@ class ImageLabel(QLabel):
         # 图片在纸张上的缩放因子 (毫米/像素)
         self.image_scale_factor = 1.0  # 默认1.0毫米/像素
         self.image_offset = QPoint(0, 0)  # 图片在纸张上的偏移
-        
-        # 拖动模式相关属性
-        self.image_drag_mode = False
-        self.dash_offset = 0
-        self.dash_animation_timer = QTimer(self)
-        self.dash_animation_timer.timeout.connect(self.update_dash_offset)
-        self.dash_animation_timer.start(50)  # 每50ms更新一次
 
     def set_paper_settings(self, settings):
         """设置纸张参数"""
@@ -90,12 +82,6 @@ class ImageLabel(QLabel):
         self.temp_end = None
         self.update()
         self.scale_changed.emit(1.0)
-        
-        # 重置拖动相关状态，防止初始化时进入拖动模式
-        self.dragging = False
-        self.image_drag_mode = False
-        if self.btn_confirm:
-            self.btn_confirm.hide()
 
     def _calculate_initial_scale(self):
         """计算初始缩放因子，使图片至少一边贴边"""
@@ -122,12 +108,6 @@ class ImageLabel(QLabel):
             self.paper_settings = paper_settings
             self._update_paper_display()
             self.update()
-            
-            # 重置拖动相关状态
-            self.dragging = False
-            self.image_drag_mode = False
-            if self.btn_confirm:
-                self.btn_confirm.hide()
 
     def _update_paper_display(self):
         """更新纸张显示"""
@@ -242,28 +222,19 @@ class ImageLabel(QLabel):
         return (screen_x, screen_y)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if not self.pixmap():
-            return
-            
-        if event.button() == Qt.LeftButton:
-            # 检查是否允许绘制
-            if self.allow_drawing:
-                pos = event.position().toPoint()
-                # 转换为相对于图片的坐标（以原始图片像素为单位）
-                img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
-                self.temp_start = (img_x, img_y)
-                self.temp_end = self.temp_start
-                self.drawing_active = True
-                self.update()
-            else:
-                # 进入拖动模式（无论是否已通过双击激活）
+        if not self.pixmap() or not self.allow_drawing:
+            if event.button() == Qt.LeftButton:
                 self.dragging = True
-                # 使用局部坐标而不是全局坐标
-                self.last_mouse_pos = event.position().toPoint()
-                # 自动激活拖动模式并显示确认按钮
-                self.image_drag_mode = True
-                if self.btn_confirm:
-                    self.btn_confirm.show()
+                self.last_mouse_pos = event.globalPosition().toPoint()
+            return
+        if event.button() == Qt.LeftButton:
+            pos = event.position().toPoint()
+            # 转换为相对于图片的坐标（以原始图片像素为单位）
+            img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y())
+            self.temp_start = (img_x, img_y)
+            self.temp_end = self.temp_start
+            self.drawing_active = True
+            self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.temp_start and self.allow_drawing and self.drawing_active:
@@ -277,19 +248,13 @@ class ImageLabel(QLabel):
             self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
             self.update()
         elif self.dragging and self.last_mouse_pos:
-            # 处理图片拖动
-            # 使用局部坐标计算移动距离
-            delta = event.position().toPoint() - self.last_mouse_pos
-            
-            # 移动图片在纸上的位置
-            if self.pixmap_original and self.image_drag_mode:
-                self.image_offset += delta
-                # 重新生成整个 pixmap 以显示移动后的图片
-                self._update_paper_display()
-                self.update()
-                    
-            self.last_mouse_pos = event.position().toPoint()
-            event.accept()
+            delta = event.globalPosition().toPoint() - self.last_mouse_pos
+            scroll_area = self.get_scroll_area()
+            if scroll_area:
+                scroll_area.horizontalScrollBar().setValue(scroll_area.horizontalScrollBar().value()-delta.x())
+                scroll_area.verticalScrollBar().setValue(scroll_area.verticalScrollBar().value()-delta.y())
+            self.last_mouse_pos = event.globalPosition().toPoint()
+
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             if self.allow_drawing and self.temp_start and self.drawing_active:
@@ -303,106 +268,10 @@ class ImageLabel(QLabel):
                 self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
                 self.drawing_active = False
                 self.update()
-            elif self.dragging:
-                # 处理拖动结束
-                self.dragging = False
-                # 注意：不立即关闭拖动模式，需要用户点击确认按钮来关闭
-            else:
-                self.dragging = False
+            self.dragging = False
 
-    def paintEvent(self, event):
-        if not self.pixmap():
-            return
-        painter = QPainter(self)
-        # 提高渲染质量
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.drawPixmap(0, 0, self.pixmap())
-        pen = QPen(self.line_color, 2)
-        painter.setPen(pen)
-        
-        # 绘制已完成的线条（只显示设置了实际长度的线条）
-        for line in self.lines:
-            self._draw_line_with_arrows(painter, line["start"], line["end"])
-            # 只有设置了实际长度才显示文本
-            if "real_length" in line:
-                self._draw_length_text(painter, line)
-                
-        for g in self.gradients:
-            self._draw_line_with_arrows(painter, g["start"], g["end"])
-            self._draw_gradient_like(painter, g["start"], g["end"])
-            # 只有设置了实际长度才显示文本
-            if "real_length" in g:
-                self._draw_length_text(painter, g)
-                
-        # 绘制临时线条（不显示长度）
-        if self.temp_start and self.temp_end:
-            self._draw_line_with_arrows(painter, self.temp_start, self.temp_end)
-            if self.draw_mode == "gradient":
-                self._draw_gradient_like(painter, self.temp_start, self.temp_end)
-            # 临时线条不显示长度文本
-            
-        # 如果处于拖动模式，绘制动态虚线框
-        if self.image_drag_mode and self.pixmap_original:
-            self._draw_drag_border(painter)
-            
-        painter.end()
-
-    def _draw_drag_border(self, painter):
-        """绘制拖动模式下的动态虚线框"""
-        if not self.pixmap_original:
-            return
-            
-        # 获取图片在屏幕上的位置和尺寸
-        display_scale = 8
-        display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
-        display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
-        
-        # 创建虚线画笔
-        pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
-        pen.setDashPattern([5, 5])  # 设置虚线模式
-        pen.setDashOffset(self.dash_offset)  # 设置虚线偏移实现动画效果
-        painter.setPen(pen)
-        
-        # 绘制图片边界框
-        rect = QRectF(self.image_offset.x(), self.image_offset.y(), display_width, display_height)
-        painter.drawRect(rect)
-
-    def _update_paper_display(self):
-        """更新纸张显示"""
-        # 创建纸张大小的Pixmap
-        # 使用更高的分辨率显示 (每毫米8像素)
-        display_scale = 8
-        paper_width = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
-        paper_height = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
-        
-        # 创建白色背景
-        paper_pixmap = QPixmap(paper_width, paper_height)
-        paper_pixmap.fill(Qt.white)
-        
-        if self.pixmap_original:
-            # 根据image_scale_factor计算图片显示大小
-            # image_scale_factor是毫米/像素，display_scale是像素/毫米（显示时）
-            display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
-            display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
-            
-            # 使用更高的质量缩放
-            scaled_image = self.pixmap_original.scaled(display_width, display_height, 
-                                                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            # 在纸张上绘制图片（使用当前的image_offset）
-            painter = QPainter(paper_pixmap)
-            # 设置渲染质量
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            painter.drawPixmap(self.image_offset, scaled_image)
-            painter.end()
-        
-        # 设置显示
-        self.setPixmap(paper_pixmap)
-        self.resize(paper_pixmap.size())
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """处理双击事件，直接开始拖动图片"""
+        """处理双击事件，用于输入目标长度"""
         if not self.pixmap():
             return
             
@@ -418,23 +287,6 @@ class ImageLabel(QLabel):
             if self._is_point_near_line(click_pos, gradient, tolerance=15):
                 self._open_length_dialog(i, "gradient", gradient)
                 return
-                
-        # 如果没有点击到线条，则直接开始拖动图片
-        self.dragging = True
-        self.last_mouse_pos = event.globalPosition().toPoint()
-        self.image_drag_mode = True  # 启用拖动模式
-        # 显示确认按钮
-        if self.btn_confirm:
-            self.btn_confirm.show()
-
-    def confirm_drag(self):
-        """确认拖动操作"""
-        self.dragging = False
-        self.image_drag_mode = False
-        # 隐藏确认按钮
-        if self.btn_confirm:
-            self.btn_confirm.hide()
-        self.update()
 
     def _is_point_near_line(self, point, line, tolerance=15):
         """检查点是否在线附近"""
@@ -595,11 +447,6 @@ class ImageLabel(QLabel):
             if self.draw_mode == "gradient":
                 self._draw_gradient_like(painter, self.temp_start, self.temp_end)
             # 临时线条不显示长度文本
-            
-        # 如果处于拖动模式，绘制动态虚线框
-        if self.image_drag_mode and self.pixmap_original:
-            self._draw_drag_border(painter)
-            
         painter.end()
 
     def _draw_line_with_arrows(self, painter, start, end, arrow_size=10):
@@ -671,32 +518,6 @@ class ImageLabel(QLabel):
         text_width = font_metrics.horizontalAdvance(txt)
         text_height = font_metrics.height()
         painter.drawText(int(midx - text_width/2), int(midy - text_height/2), txt)
-
-    def _draw_drag_border(self, painter):
-        """绘制拖动模式下的动态虚线框"""
-        if not self.pixmap_original:
-            return
-            
-        # 获取图片在屏幕上的位置和尺寸
-        display_scale = 8
-        display_width = int(self.pixmap_original.width() * self.image_scale_factor * display_scale * self.scale_factor)
-        display_height = int(self.pixmap_original.height() * self.image_scale_factor * display_scale * self.scale_factor)
-        
-        # 创建虚线画笔
-        pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
-        pen.setDashPattern([5, 5])  # 设置虚线模式
-        pen.setDashOffset(self.dash_offset)  # 设置虚线偏移实现动画效果
-        painter.setPen(pen)
-        
-        # 绘制图片边界框
-        rect = QRectF(self.image_offset.x(), self.image_offset.y(), display_width, display_height)
-        painter.drawRect(rect)
-
-    def update_dash_offset(self):
-        """更新虚线偏移值以实现动画效果"""
-        self.dash_offset += 1
-        if self.image_drag_mode:  # 只有在拖动模式下才更新显示
-            self.update()
 
     def export_to_pdf(self, file_path, paper_settings):
         """导出为PDF"""

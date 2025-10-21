@@ -1,11 +1,9 @@
 # 包含所有对话框类
 import sys
 from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QComboBox, QHBoxLayout, QWidget,
-    QLabel, QVBoxLayout, QPushButton, QFrame
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QComboBox, QHBoxLayout, QWidget
 )
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
-from PySide6.QtGui import QFont, QPalette, QColor
+from PySide6.QtCore import Qt
 
 
 class LengthInputDialog(QDialog):
@@ -52,86 +50,3 @@ class LengthInputDialog(QDialog):
         
     def set_unit(self, unit):
         self.unit_combo.setCurrentText(unit)
-
-
-class MoveImageTipDialog(QDialog):
-    """
-    显示"移动图片"提示的对话框，1秒后淡出
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-        
-        # 设置窗口位置和大小
-        self.setFixedSize(200, 100)
-        
-        # 创建主布局
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 创建提示框容器
-        container = QFrame()
-        container.setStyleSheet("""
-            QFrame {
-                background-color: rgba(0, 0, 0, 180);
-                border-radius: 10px;
-                border: 1px solid rgba(255, 255, 255, 50);
-            }
-        """)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(20, 20, 20, 20)
-        
-        # 提示文本
-        label = QLabel("移动图片")
-        label.setStyleSheet("color: white; font-size: 16px;")
-        label.setAlignment(Qt.AlignCenter)
-        
-        # 确认按钮
-        self.confirm_btn = QPushButton("确认")
-        self.confirm_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                border: none;
-                padding: 5px;
-                border-radius: 4px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-        """)
-        self.confirm_btn.clicked.connect(self.accept)
-        
-        container_layout.addWidget(label)
-        container_layout.addWidget(self.confirm_btn)
-        
-        layout.addWidget(container)
-        self.setLayout(layout)
-        
-        # 设置淡出动画
-        self.fade_animation = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_animation.setDuration(1000)  # 1秒淡出
-        self.fade_animation.setStartValue(1.0)
-        self.fade_animation.setEndValue(0.0)
-        self.fade_animation.setEasingCurve(QEasingCurve.OutQuad)
-        self.fade_animation.finished.connect(self.close)
-        
-        # 设置定时器，1秒后开始淡出
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self.start_fade_out)
-        
-    def showEvent(self, event):
-        super().showEvent(event)
-        # 显示1秒后开始淡出
-        self.timer.start(1000)
-        
-    def start_fade_out(self):
-        self.fade_animation.start()
-        
-    def mousePressEvent(self, event):
-        # 点击任意位置关闭对话框
-        self.accept()
