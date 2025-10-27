@@ -185,6 +185,17 @@ class ImageLabel(QLabel):
             return QPoint(x_offset, y_offset)
         return QPoint(0, 0)
 
+    def _get_image_physical_offset(self, image_item):
+        """获取图片的物理偏移量（毫米）"""
+        if image_item.pixmap:
+            # 偏移比例转为物理毫米
+            paper_width_mm = self.paper_settings["width_mm"]
+            paper_height_mm = self.paper_settings["height_mm"]
+            x_offset_mm = (paper_width_mm - image_item.pixmap.width() * image_item.image_scale_factor) * image_item.offset_ratios[0]
+            y_offset_mm = (paper_height_mm - image_item.pixmap.height() * image_item.image_scale_factor) * image_item.offset_ratios[1]
+            return (x_offset_mm, y_offset_mm)
+        return (0, 0)
+
     def _update_paper_display(self):
         """更新纸张显示"""
         # 创建纸张大小的Pixmap
@@ -847,8 +858,8 @@ class ImageLabel(QLabel):
             # 计算缩放因子，使所有图片适应页面
             if self.images:
                 # 计算所有图片的边界
-                min_x, min_y = float('inf'), float('inf')
-                max_x, max_y = float('-inf'), float('-inf')
+                min_x_mm, min_y_mm = float('inf'), float('inf')
+                max_x_mm, max_y_mm = float('-inf'), float('-inf')
                 
                 for image_item in self.images:
                     if image_item.pixmap:
@@ -856,14 +867,16 @@ class ImageLabel(QLabel):
                         img_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
                         img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
                         
-                        min_x = min(min_x, image_item.image_offset.x())
-                        min_y = min(min_y, image_item.image_offset.y())
-                        max_x = max(max_x, image_item.image_offset.x() + img_width_mm)
-                        max_y = max(max_y, image_item.image_offset.y() + img_height_mm)
+                        offset_x_mm, offset_y_mm = self._get_image_physical_offset(image_item)
+                        
+                        min_x_mm = min(min_x_mm, offset_x_mm)
+                        min_y_mm = min(min_y_mm, offset_y_mm)
+                        max_x_mm = max(max_x_mm, offset_x_mm + img_width_mm)
+                        max_y_mm = max(max_y_mm, offset_y_mm + img_height_mm)
                 
                 # 计算整体尺寸
-                total_width_mm = max_x - min_x
-                total_height_mm = max_y - min_y
+                total_width_mm = max_x_mm - min_x_mm
+                total_height_mm = max_y_mm - min_y_mm
                 
                 # 计算缩放因子以适应页面（留出边距）
                 margin_mm = 20  # 页边距
@@ -875,16 +888,17 @@ class ImageLabel(QLabel):
                 for image_item in self.images:
                     if image_item.pixmap:
                         # 计算图片物理尺寸（毫米）
-                        image_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
-                        image_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
+                        img_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
+                        img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
                         
                         # 转换为点（1英寸=72点，1英寸=25.4毫米）
-                        image_width_pt = image_width_mm * dpi / 25.4 * scale_factor
-                        image_height_pt = image_height_mm * dpi / 25.4 * scale_factor
+                        image_width_pt = img_width_mm * dpi / 25.4 * scale_factor
+                        image_height_pt = img_height_mm * dpi / 25.4 * scale_factor
                         
                         # 计算相对于整体边界的位置
-                        relative_x_mm = image_item.image_offset.x() - min_x
-                        relative_y_mm = image_item.image_offset.y() - min_y
+                        offset_x_mm, offset_y_mm = self._get_image_physical_offset(image_item)
+                        relative_x_mm = offset_x_mm - min_x_mm
+                        relative_y_mm = offset_y_mm - min_y_mm
                         
                         # 转换为点并加上页边距
                         image_x_pt = relative_x_mm * dpi / 25.4 * scale_factor + margin_mm * dpi / 25.4
