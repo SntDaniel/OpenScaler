@@ -1,8 +1,7 @@
 # 包含 MainWindow 类，负责主界面布局和菜单
-# 包含 MainWindow 类，负责主界面布局和菜单
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QPushButton,
-    QVBoxLayout, QWidget, QHBoxLayout, QScrollArea, QButtonGroup, QRadioButton, QDialog, QFormLayout, QComboBox
+    QVBoxLayout, QWidget, QHBoxLayout, QScrollArea, QButtonGroup, QRadioButton, QDialog, QFormLayout, QComboBox, QMenu
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -152,9 +151,9 @@ class MainWindow(QMainWindow):
 
         vm = menubar.addMenu("视图")
         zai = QAction("放大", self)
-        zai.triggered.connect(lambda: self.image_label.apply_zoom(1.25, self.image_label.rect().center()))
+        zai.triggered.connect(lambda: self.image_label.apply_zoom(1.1, self.image_label.rect().center()))
         zao = QAction("缩小", self)
-        zao.triggered.connect(lambda: self.image_label.apply_zoom(0.8, self.image_label.rect().center()))
+        zao.triggered.connect(lambda: self.image_label.apply_zoom(0.9, self.image_label.rect().center()))
         zr = QAction("还原", self)
         zr.triggered.connect(self.image_label.reset_zoom)
         vm.addAction(zai)
@@ -175,12 +174,11 @@ class MainWindow(QMainWindow):
         mm.addAction(sa)
         mm.addAction(ga)
         
-        # 添加编辑菜单
-        edit_menu = menubar.addMenu("编辑")
-        self.image_move_action = QAction("移动图片", self)
-        self.image_move_action.setCheckable(True)
-        self.image_move_action.triggered.connect(self.toggle_image_move)
-        edit_menu.addAction(self.image_move_action)
+        # 移动图片菜单项（第一级菜单）
+        self.move_image_action = QAction("移动图片", self)
+        self.move_image_action.setCheckable(True)
+        self.move_image_action.triggered.connect(self.toggle_image_move)
+        menubar.addAction(self.move_image_action)
 
         self.statusBar().showMessage("缩放: 100%")
         self.image_label.scale_changed.connect(self.update_statusbar)
@@ -196,7 +194,7 @@ class MainWindow(QMainWindow):
         if file:  # 用户选择了文件
             self.image_label.load_image_on_paper(file, self.paper_settings)
             self.btn_confirm.hide()
-            self.btn_confirm_move.hide()
+            # 不再隐藏btn_confirm_move，因为load_image_on_paper会自动显示它
             self.overlay.hide()
             self.image_loaded = True
         else:  # 用户取消
@@ -209,11 +207,17 @@ class MainWindow(QMainWindow):
         self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
         self.btn_confirm.show()
         self.btn_confirm_move.hide()
+        # 退出移动模式
+        self.move_image_action.setChecked(False)
+        self.image_label.set_image_move_mode(False)
 
     def enable_gradient(self):
         self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
         self.btn_confirm.show()
         self.btn_confirm_move.hide()
+        # 退出移动模式
+        self.move_image_action.setChecked(False)
+        self.image_label.set_image_move_mode(False)
 
     def update_statusbar(self, factor):
         self.statusBar().showMessage(f"缩放: {int(factor*100)}%")
@@ -264,7 +268,7 @@ class MainWindow(QMainWindow):
     def confirm_image_move(self):
         """确认图片移动"""
         # 退出移动模式
-        self.image_move_action.setChecked(False)
+        self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
         self.btn_confirm_move.hide()
         self.statusBar().showMessage("图片移动已完成")
