@@ -4,7 +4,7 @@ import math
 from PySide6.QtWidgets import (
     QLabel, QMessageBox, QDialog, QScrollArea, QMenu
 )
-from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QGuiApplication, QCursor
+from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor
 from PySide6.QtCore import Qt, QPoint, Signal, QRectF
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtGui import QPageSize, QPageLayout

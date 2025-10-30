@@ -1,5 +1,4 @@
 import os
-import sys
 from PyInstaller.__main__ import run
 
 # 获取当前目录

@@ -3,7 +3,7 @@ import sys
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QComboBox, QHBoxLayout, QWidget
 )
-from PySide6.QtCore import Qt
+
 
 
 class LengthInputDialog(QDialog):
