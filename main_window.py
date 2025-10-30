@@ -11,7 +11,7 @@ from image_label import ImageLabel
 class PaperSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("页面设置")
+        self.setWindowTitle("纸张设置")
         self.setModal(True)
         
         layout = QFormLayout(self)
@@ -136,41 +136,40 @@ class MainWindow(QMainWindow):
         self.overlay.setGeometry(self.rect())
         self.overlay.show()
 
+        # 创建菜单栏但默认禁用
+        self.create_menubar()
+        self.set_menu_enabled(False)
+
+        self.statusBar().showMessage("缩放: 100%")
+        self.image_label.scale_changed.connect(self.update_statusbar)
+        # 传递纸张设置给image_label
+        self.image_label.set_paper_settings(self.paper_settings)
+
+    def create_menubar(self):
+        """创建菜单栏"""
         menubar = self.menuBar()
         fm = menubar.addMenu("文件")
-        oa = QAction("打开图片", self)
-        oa.triggered.connect(self.load_image)
-        fm.addAction(oa)
+        self.oa = QAction("添加图片", self)
+        self.oa.triggered.connect(self.load_image)
+        fm.addAction(self.oa)
         
-        # 添加导出PDF功能
-        export_pdf = QAction("导出为PDF", self)
-        export_pdf.triggered.connect(self.export_pdf)
-        fm.addAction(export_pdf)
+        self.export_pdf_action = QAction("导出为PDF", self)
+        self.export_pdf_action.triggered.connect(self.export_pdf)
+        fm.addAction(self.export_pdf_action)
 
-        vm = menubar.addMenu("视图")
-        zai = QAction("放大", self)
-        zai.triggered.connect(lambda: self.image_label.apply_zoom(1.1, self.image_label.rect().center()))
-        zao = QAction("缩小", self)
-        zao.triggered.connect(lambda: self.image_label.apply_zoom(0.9, self.image_label.rect().center()))
-        zr = QAction("还原", self)
-        zr.triggered.connect(self.image_label.reset_zoom)
-        vm.addAction(zai)
-        vm.addAction(zao)
-        vm.addAction(zr)
-        
         # 页面设置菜单
         page_menu = menubar.addMenu("页面")
-        page_setup = QAction("页面设置", self)
-        page_setup.triggered.connect(self.page_setup)
-        page_menu.addAction(page_setup)
+        self.page_setup_action = QAction("纸张设置", self)
+        self.page_setup_action.triggered.connect(self.page_setup)
+        page_menu.addAction(self.page_setup_action)
 
         mm = menubar.addMenu("添加测量")
-        sa = QAction("单线测量", self)
-        sa.triggered.connect(self.enable_single)
-        ga = QAction("平行线测量", self)
-        ga.triggered.connect(self.enable_gradient)
-        mm.addAction(sa)
-        mm.addAction(ga)
+        self.sa = QAction("单线测量", self)
+        self.sa.triggered.connect(self.enable_single)
+        self.ga = QAction("平行线测量", self)
+        self.ga.triggered.connect(self.enable_gradient)
+        mm.addAction(self.sa)
+        mm.addAction(self.ga)
         
         # 移动图片菜单项（第一级菜单）
         self.move_image_action = QAction("移动图片", self)
@@ -178,10 +177,13 @@ class MainWindow(QMainWindow):
         self.move_image_action.triggered.connect(self.toggle_image_move)
         menubar.addAction(self.move_image_action)
 
-        self.statusBar().showMessage("缩放: 100%")
-        self.image_label.scale_changed.connect(self.update_statusbar)
-        # 传递纸张设置给image_label
-        self.image_label.set_paper_settings(self.paper_settings)
+    def set_menu_enabled(self, enabled):
+        """设置菜单项的启用状态"""
+        self.export_pdf_action.setEnabled(enabled)
+        self.page_setup_action.setEnabled(enabled)
+        self.sa.setEnabled(enabled)
+        self.ga.setEnabled(enabled)
+        self.move_image_action.setEnabled(enabled)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -195,6 +197,10 @@ class MainWindow(QMainWindow):
             # 不再隐藏btn_confirm_move，因为load_image_on_paper会自动显示它
             self.overlay.hide()
             self.image_loaded = True
+            
+            # 第一次加载图片时启用菜单项
+            if not self.export_pdf_action.isEnabled():
+                self.set_menu_enabled(True)
         else:  # 用户取消
             if not self.image_loaded:
                 self.overlay.show()   # 只在从未加载过图片时，才显示按钮

@@ -63,6 +63,14 @@ class ImageLabel(QLabel):
         self.image_drag_start_pos = None
         self.original_offset_ratios = (0.0, 0.0)  # 初始化为比例值
         self.original_image_offset = QPoint(0, 0)  # 保存拖动开始时的实际偏移量
+        
+        # 右键菜单
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+        self.context_menu = QMenu(self)
+        self.delete_action = self.context_menu.addAction("删除图片")
+        self.delete_action.triggered.connect(self.delete_selected_image)
+
     def set_paper_settings(self, settings):
         """设置纸张参数"""
         old_settings = self.paper_settings.copy()
@@ -150,7 +158,7 @@ class ImageLabel(QLabel):
             return
             
         # 纸张可用空间（留出一点边距）
-        margin_mm = 30
+        margin_mm = 10
         available_width_mm = self.paper_settings["width_mm"] - 2 * margin_mm
         available_height_mm = self.paper_settings["height_mm"] - 2 * margin_mm
         
@@ -433,6 +441,7 @@ class ImageLabel(QLabel):
                 self.temp_end = self.temp_start
                 self.drawing_active = True
                 self.update()
+                
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.image_dragging and self.image_move_mode and self.selected_image_index >= 0:
             # 移动图片
@@ -496,6 +505,7 @@ class ImageLabel(QLabel):
                 scroll_area.horizontalScrollBar().setValue(scroll_area.horizontalScrollBar().value()-delta.x())
                 scroll_area.verticalScrollBar().setValue(scroll_area.verticalScrollBar().value()-delta.y())
             self.last_mouse_pos = event.globalPosition().toPoint()
+            
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             if self.image_dragging:
@@ -548,6 +558,38 @@ class ImageLabel(QLabel):
             if self._is_point_near_line(click_pos, gradient, image_index, tolerance=15):
                 self._open_length_dialog(i, "gradient", gradient, image_index)
                 return
+
+    def show_context_menu(self, position):
+        """显示右键菜单"""
+        # 检查是否有图片
+        if not self.images:
+            return
+            
+        # 检查点击位置是否在图片上
+        local_point = QPoint(position)
+        
+        # 查找点击的是哪张图片
+        clicked_image_index = self._get_image_at_point(local_point)
+        if clicked_image_index >= 0:
+            self.selected_image_index = clicked_image_index
+            self._update_paper_display()
+            self.update()
+            # 显示菜单
+            self.context_menu.exec(self.mapToGlobal(position))
+
+    def delete_selected_image(self):
+        """删除选中的图片"""
+        if 0 <= self.selected_image_index < len(self.images):
+            reply = QMessageBox.question(
+                self, 
+                "确认删除", 
+                "确定要删除这张图片吗？", 
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self._delete_image(self.selected_image_index)
 
     def _is_point_near_line(self, point, line, image_index, tolerance=15):
         """检查点是否在线附近"""
@@ -811,6 +853,7 @@ class ImageLabel(QLabel):
                 if self.btn_confirm:
                     self.btn_confirm.hide()
 
+    # 在 image_label.py 文件中替换 export_to_pdf 方法
     def export_to_pdf(self, file_path, paper_settings):
         """导出为PDF"""
         try:
@@ -849,11 +892,10 @@ class ImageLabel(QLabel):
             
             # 获取PDF页面尺寸（以点为单位）
             page_rect = printer.pageRect(QPrinter.DevicePixel)
-            dpi = printer.resolution()
-            
-            # 计算页面尺寸（毫米）
-            page_width_mm = page_rect.width() * 25.4 / dpi
-            page_height_mm = page_rect.height() * 25.4 / dpi
+            page_layout = printer.pageLayout()
+            page_size_mm = page_layout.pageSize().size(QPageSize.Millimeter)
+            page_width_mm = page_size_mm.width()
+            page_height_mm = page_size_mm.height()
             
             # 计算缩放因子，使所有图片适应页面
             if self.images:
@@ -880,9 +922,15 @@ class ImageLabel(QLabel):
                 
                 # 计算缩放因子以适应页面（留出边距）
                 margin_mm = 20  # 页边距
-                scale_x = (page_width_mm - margin_mm * 2) / total_width_mm if total_width_mm > 0 else 1
-                scale_y = (page_height_mm - margin_mm * 2) / total_height_mm if total_height_mm > 0 else 1
-                scale_factor = min(scale_x, scale_y, 1.0)  # 不放大图片
+                available_width_mm = page_width_mm - margin_mm * 2
+                available_height_mm = page_height_mm - margin_mm * 2
+                
+                if total_width_mm > 0 and total_height_mm > 0:
+                    scale_x = available_width_mm / total_width_mm if total_width_mm > 0 else 1
+                    scale_y = available_height_mm / total_height_mm if total_height_mm > 0 else 1
+                    scale_factor = min(scale_x, scale_y, 1.0)  # 不放大图片
+                else:
+                    scale_factor = 1.0
                 
                 # 绘制所有图片
                 for image_item in self.images:
@@ -892,6 +940,7 @@ class ImageLabel(QLabel):
                         img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
                         
                         # 转换为点（1英寸=72点，1英寸=25.4毫米）
+                        dpi = printer.resolution()
                         image_width_pt = img_width_mm * dpi / 25.4 * scale_factor
                         image_height_pt = img_height_mm * dpi / 25.4 * scale_factor
                         
@@ -906,7 +955,7 @@ class ImageLabel(QLabel):
                         
                         # 保持图片原始宽高比
                         scaled_pixmap = image_item.pixmap.scaled(int(image_width_pt), int(image_height_pt), 
-                                                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
                         
                         # 绘制图片
                         painter.drawPixmap(image_x_pt, image_y_pt, scaled_pixmap)
