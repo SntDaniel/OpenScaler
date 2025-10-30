@@ -853,9 +853,8 @@ class ImageLabel(QLabel):
                 if self.btn_confirm:
                     self.btn_confirm.hide()
 
-    # 在 image_label.py 文件中替换 export_to_pdf 方法
     def export_to_pdf(self, file_path, paper_settings):
-        """导出为PDF"""
+        """导出为PDF，确保与程序显示一致"""
         try:
             printer = QPrinter(QPrinter.HighResolution)
             printer.setOutputFormat(QPrinter.PdfFormat)
@@ -890,75 +889,41 @@ class ImageLabel(QLabel):
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             
-            # 获取PDF页面尺寸（以点为单位）
+            # 获取PDF页面的DPI和尺寸信息
+            dpi = printer.resolution()
             page_rect = printer.pageRect(QPrinter.DevicePixel)
-            page_layout = printer.pageLayout()
-            page_size_mm = page_layout.pageSize().size(QPageSize.Millimeter)
-            page_width_mm = page_size_mm.width()
-            page_height_mm = page_size_mm.height()
+            page_width_px = page_rect.width()
+            page_height_px = page_rect.height()
             
-            # 计算缩放因子，使所有图片适应页面
-            if self.images:
-                # 计算所有图片的边界
-                min_x_mm, min_y_mm = float('inf'), float('inf')
-                max_x_mm, max_y_mm = float('-inf'), float('-inf')
-                
-                for image_item in self.images:
-                    if image_item.pixmap:
-                        # 计算图片边界
-                        img_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
-                        img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
-                        
-                        offset_x_mm, offset_y_mm = self._get_image_physical_offset(image_item)
-                        
-                        min_x_mm = min(min_x_mm, offset_x_mm)
-                        min_y_mm = min(min_y_mm, offset_y_mm)
-                        max_x_mm = max(max_x_mm, offset_x_mm + img_width_mm)
-                        max_y_mm = max(max_y_mm, offset_y_mm + img_height_mm)
-                
-                # 计算整体尺寸
-                total_width_mm = max_x_mm - min_x_mm
-                total_height_mm = max_y_mm - min_y_mm
-                
-                # 计算缩放因子以适应页面（留出边距）
-                margin_mm = 20  # 页边距
-                available_width_mm = page_width_mm - margin_mm * 2
-                available_height_mm = page_height_mm - margin_mm * 2
-                
-                if total_width_mm > 0 and total_height_mm > 0:
-                    scale_x = available_width_mm / total_width_mm if total_width_mm > 0 else 1
-                    scale_y = available_height_mm / total_height_mm if total_height_mm > 0 else 1
-                    scale_factor = min(scale_x, scale_y, 1.0)  # 不放大图片
-                else:
-                    scale_factor = 1.0
-                
-                # 绘制所有图片
-                for image_item in self.images:
-                    if image_item.pixmap:
-                        # 计算图片物理尺寸（毫米）
-                        img_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
-                        img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
-                        
-                        # 转换为点（1英寸=72点，1英寸=25.4毫米）
-                        dpi = printer.resolution()
-                        image_width_pt = img_width_mm * dpi / 25.4 * scale_factor
-                        image_height_pt = img_height_mm * dpi / 25.4 * scale_factor
-                        
-                        # 计算相对于整体边界的位置
-                        offset_x_mm, offset_y_mm = self._get_image_physical_offset(image_item)
-                        relative_x_mm = offset_x_mm - min_x_mm
-                        relative_y_mm = offset_y_mm - min_y_mm
-                        
-                        # 转换为点并加上页边距
-                        image_x_pt = relative_x_mm * dpi / 25.4 * scale_factor + margin_mm * dpi / 25.4
-                        image_y_pt = relative_y_mm * dpi / 25.4 * scale_factor + margin_mm * dpi / 25.4
-                        
-                        # 保持图片原始宽高比
-                        scaled_pixmap = image_item.pixmap.scaled(int(image_width_pt), int(image_height_pt), 
-                                                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        
-                        # 绘制图片
-                        painter.drawPixmap(image_x_pt, image_y_pt, scaled_pixmap)
+            # 使用与程序中相同的缩放因子来保持一致性
+            display_scale = 8
+            current_scale_factor = 1.0  # PDF导出使用1:1比例，不使用界面缩放
+            
+            # 绘制所有图片，保持与程序显示一致的逻辑
+            for image_item in self.images:
+                if image_item.pixmap:
+                    # 根据image_scale_factor计算图片显示大小（与程序中一致）
+                    # 这里需要将毫米转换为像素点进行绘制
+                    img_width_mm = image_item.pixmap.width() * image_item.image_scale_factor
+                    img_height_mm = image_item.pixmap.height() * image_item.image_scale_factor
+                    
+                    # 转换为像素点 (1英寸=25.4毫米, 1英寸=dpi像素)
+                    display_width = int(img_width_mm * dpi / 25.4)
+                    display_height = int(img_height_mm * dpi / 25.4)
+                    
+                    # 使用更高的质量缩放（与程序中一致）
+                    scaled_image = image_item.pixmap.scaled(display_width, display_height, 
+                                                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    
+                    # 根据比例计算图片偏移量（与程序中一致）
+                    x_offset_ratio, y_offset_ratio = image_item.offset_ratios
+                    max_x_offset = max(0, page_width_px - display_width)
+                    max_y_offset = max(0, page_height_px - display_height)
+                    x_offset = int(max_x_offset * x_offset_ratio)
+                    y_offset = int(max_y_offset * y_offset_ratio)
+                    
+                    # 在PDF页面上绘制图片
+                    painter.drawPixmap(x_offset, y_offset, scaled_image)
             
             painter.end()
             return True
