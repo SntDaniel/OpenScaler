@@ -249,7 +249,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出失败", "请先加载图片")
             return
             
-        file_path, _ = QFileDialog.getSaveFileName(self, "导出为PDF", "", "PDF Files (*.pdf)")
+        # 生成基于当前时间的默认文件名
+        from datetime import datetime
+        default_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "导出为PDF", default_filename, "PDF Files (*.pdf)")
         if file_path:
             if self.image_label.export_to_pdf(file_path, self.paper_settings):
                 from PySide6.QtWidgets import QMessageBox
