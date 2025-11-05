@@ -1,11 +1,44 @@
-# 包含 MainWindow 类，负责主界面布局和菜单
+# 包含 MainWindow 类，负责主界面布局和菜单 
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QPushButton,
     QVBoxLayout, QWidget, QHBoxLayout, QScrollArea, QButtonGroup, QRadioButton, QDialog, QFormLayout, QComboBox, QMenu
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRect
 from image_label import ImageLabel
+
+
+# ================== 按钮样式 ==================
+save_button_style = """
+    QPushButton {
+        background-color: qlineargradient(
+            spread:pad, x1:0, y1:0, x2:0, y2:1,
+            stop:0 #4caf65, stop:1 #2e637d
+        );
+        color: white;
+        font-size: 20px;
+        font-weight: bold;
+        padding: 12px 28px;
+        border: none;
+        border-radius: 25px;
+        box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.25);
+        transition: all 0.3s ease;
+    }
+    QPushButton:hover {
+        background-color: qlineargradient(
+            spread:pad, x1:0, y1:0, x2:0, y2:1,
+            stop:0 #5fcf76, stop:1 #3b6f9d
+        );
+        transform: scale(1.05);
+        box-shadow: 0px 6px 12px rgba(0, 0, 0, 0.3);
+    }
+    QPushButton:pressed {
+        background-color: #1f4b5d;
+        padding: 13px 26px;
+    }
+"""
+
+# =============================================
 
 
 class PaperSettingsDialog(QDialog):
@@ -50,9 +83,14 @@ class PaperSettingsDialog(QDialog):
         
         # 添加确定和取消按钮
         buttons = QHBoxLayout()
-        from PySide6.QtWidgets import QPushButton, QDialogButtonBox
+        from PySide6.QtWidgets import QPushButton
         ok_button = QPushButton("确定")
         cancel_button = QPushButton("取消")
+
+        # 应用按钮样式
+        # ok_button.setStyleSheet(save_button_style)
+        # cancel_button.setStyleSheet(save_button_style)
+
         ok_button.clicked.connect(self.accept)
         cancel_button.clicked.connect(self.reject)
         buttons.addWidget(ok_button)
@@ -76,6 +114,52 @@ class PaperSettingsDialog(QDialog):
         }
 
 
+class FloatingButtonWidget(QWidget):
+    """浮动按钮控件，用于显示确认按钮"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        
+        # 创建按钮布局
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.btn_confirm = QPushButton("确认画线")
+        self.btn_confirm_move = QPushButton("确认移动")
+        self.btn_confirm_move.hide()
+
+        # 应用统一按钮样式
+        self.btn_confirm.setStyleSheet(save_button_style)
+        self.btn_confirm_move.setStyleSheet(save_button_style)
+        
+        layout.addWidget(self.btn_confirm)
+        layout.addWidget(self.btn_confirm_move)
+        
+        self.adjustSize()
+        
+    def move_to_bottom_center(self, parent_rect):
+        """将按钮移动到父窗口的底部中央位置"""
+        x = parent_rect.center().x() - self.width() // 2
+        y = parent_rect.bottom() - self.height() - 20  # 距离底部20像素
+        self.move(x, y)
+        
+    def show_buttons(self, mode="draw"):
+        """显示相应的按钮"""
+        if mode == "draw":
+            self.btn_confirm.show()
+            self.btn_confirm_move.hide()
+        elif mode == "move":
+            self.btn_confirm.hide()
+            self.btn_confirm_move.show()
+        self.show()
+        self.raise_()
+        
+    def hide_buttons(self):
+        """隐藏所有按钮"""
+        self.hide()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -97,30 +181,22 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm = QPushButton("确认画线")
-        self.btn_confirm.clicked.connect(self.image_label.confirm_line)
-        self.btn_confirm.hide()
-        self.image_label.btn_confirm = self.btn_confirm
-        
-        # 添加图片移动确认按钮
-        self.btn_confirm_move = QPushButton("确认移动")
-        self.btn_confirm_move.clicked.connect(self.confirm_image_move)
-        self.btn_confirm_move.hide()
-        self.image_label.btn_confirm_move = self.btn_confirm_move
+        # 创建浮动按钮控件
+        self.floating_buttons = FloatingButtonWidget(self)
+        self.floating_buttons.btn_confirm.clicked.connect(self.image_label.confirm_line)
+        self.floating_buttons.btn_confirm_move.clicked.connect(self.confirm_image_move)
+        self.image_label.btn_confirm = self.floating_buttons.btn_confirm
+        self.image_label.btn_confirm_move = self.floating_buttons.btn_confirm_move
 
         # 添加照片按钮
         self.btn_add_photo = QPushButton("添加照片")
         self.btn_add_photo.setFixedSize(200, 60)
-        self.btn_add_photo.setStyleSheet("font-size:20px;")
+        self.btn_add_photo.setStyleSheet(save_button_style)
         self.btn_add_photo.clicked.connect(self.load_image)
-
-        bl = QHBoxLayout()
-        bl.addWidget(self.btn_confirm)
-        bl.addWidget(self.btn_confirm_move)
 
         layout = QVBoxLayout()
         layout.addWidget(self.scroll_area)
-        layout.addLayout(bl)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         c = QWidget()
         c.setLayout(layout)
@@ -144,6 +220,7 @@ class MainWindow(QMainWindow):
         self.image_label.scale_changed.connect(self.update_statusbar)
         # 传递纸张设置给image_label
         self.image_label.set_paper_settings(self.paper_settings)
+
 
     def create_menubar(self):
         """创建菜单栏"""
@@ -188,13 +265,23 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.overlay.setGeometry(self.rect())
+        # 更新浮动按钮位置到底部中央
+        self.floating_buttons.move_to_bottom_center(self.rect())
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # 更新浮动按钮位置到底部中央
+        self.floating_buttons.move_to_bottom_center(self.rect())
 
     def load_image(self):
         file, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.bmp *.jpeg)")
         if file:  # 用户选择了文件
             self.image_label.load_image_on_paper(file, self.paper_settings)
-            self.btn_confirm.hide()
-            # 不再隐藏btn_confirm_move，因为load_image_on_paper会自动显示它
+            # 确保在第一次加载图片时显示移动确认按钮
+            if not self.image_loaded:
+                self.floating_buttons.show_buttons("move")
+            else:
+                self.floating_buttons.hide_buttons()
             self.overlay.hide()
             self.image_loaded = True
             
@@ -209,16 +296,14 @@ class MainWindow(QMainWindow):
 
     def enable_single(self):
         self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
-        self.btn_confirm.show()
-        self.btn_confirm_move.hide()
+        self.floating_buttons.show_buttons("draw")
         # 退出移动模式
         self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
 
     def enable_gradient(self):
         self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
-        self.btn_confirm.show()
-        self.btn_confirm_move.hide()
+        self.floating_buttons.show_buttons("draw")
         # 退出移动模式
         self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
@@ -266,11 +351,10 @@ class MainWindow(QMainWindow):
         """切换图片移动模式"""
         self.image_label.set_image_move_mode(checked)
         if checked:
-            self.btn_confirm_move.show()
-            self.btn_confirm.hide()
+            self.floating_buttons.show_buttons("move")
             self.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
         else:
-            self.btn_confirm_move.hide()
+            self.floating_buttons.hide_buttons()
             self.statusBar().showMessage("已退出图片移动模式")
 
     def confirm_image_move(self):
@@ -278,5 +362,5 @@ class MainWindow(QMainWindow):
         # 退出移动模式
         self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
-        self.btn_confirm_move.hide()
+        self.floating_buttons.hide_buttons()
         self.statusBar().showMessage("图片移动已完成")

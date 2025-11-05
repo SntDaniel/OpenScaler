@@ -133,15 +133,13 @@ class ImageLabel(QLabel):
         
         # 导入图片后自动进入移动模式
         self.set_image_move_mode(True)
-        if self.window():
-            main_window = self.window()
-            if hasattr(main_window, 'image_move_action'):
-                main_window.image_move_action.setChecked(True)
-            if hasattr(main_window, 'btn_confirm_move') and main_window.btn_confirm_move:
-                main_window.btn_confirm_move.show()
-            if hasattr(main_window, 'statusBar'):
-                main_window.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
-
+        # 显示移动确认按钮
+        if self.btn_confirm_move:
+            self.btn_confirm_move.show()
+        # 更新状态栏消息
+        main_window = self.window()
+        if hasattr(main_window, 'statusBar'):
+            main_window.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
     def add_image(self, path):
         """添加新图片到页面"""
         self.load_image_on_paper(path)
