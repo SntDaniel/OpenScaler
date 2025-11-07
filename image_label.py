@@ -29,7 +29,7 @@ class ImageLabel(QLabel):
     def __init__(self):
         super().__init__()
         self.setMouseTracking(True)
-        self.scale_factor = 1.0
+        self.scale_factor = 0.5
         self.allow_drawing = False
         self.draw_mode = "single"
 
@@ -113,13 +113,26 @@ class ImageLabel(QLabel):
             QMessageBox.warning(self, "加载失败", "无法加载图片。")
             return
             
-        # 创建新的图片项，使用边距比例定位
-        new_image = ImageItem(pixmap, self.next_image_offset_ratio)
+        # 检查是否是第一张图片，如果是则设置居中的offset_ratios
+        is_first_image = len(self.images) == 0
+        
+        if is_first_image:
+            # 第一张图片居中放置 (水平居中，垂直方向保留5%边距)
+            center_offset_ratio = (0.5, 0.05)  # 水平居中，垂直方向5%
+            new_image = ImageItem(pixmap, center_offset_ratio)
+        else:
+            # 后续图片使用原来的逻辑
+            new_image = ImageItem(pixmap, self.next_image_offset_ratio)
+            
         self.images.append(new_image)
         self.selected_image_index = len(self.images) - 1
         
         # 计算初始缩放因子
         self._calculate_initial_scale_for_image(self.selected_image_index)
+        
+        # 对于第一张图片，需要特殊处理offset_ratios以实现真正的居中
+        if is_first_image:
+            self._center_first_image()
         
         # 更新下一张图片的偏移位置比例
         self.next_image_offset_ratio = (
@@ -140,6 +153,13 @@ class ImageLabel(QLabel):
         main_window = self.window()
         if hasattr(main_window, 'statusBar'):
             main_window.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
+
+    def _center_first_image(self):
+        """确保第一张图片在纸张上水平居中"""
+        if len(self.images) > 0:
+            first_image = self.images[0]
+            # 设置水平居中，垂直方向5%
+            first_image.offset_ratios = (0.5, 0.05)
     def add_image(self, path):
         """添加新图片到页面"""
         self.load_image_on_paper(path)
@@ -186,7 +206,12 @@ class ImageLabel(QLabel):
             display_width = int(image_item.pixmap.width() * image_item.image_scale_factor * display_scale * self.scale_factor)
             display_height = int(image_item.pixmap.height() * image_item.image_scale_factor * display_scale * self.scale_factor)
             
-            x_offset = int((paper_width - display_width) * image_item.offset_ratios[0])
+            # 如果offset_ratios[0]是0.5，则实现水平居中
+            if image_item.offset_ratios[0] == 0.5:
+                x_offset = (paper_width - display_width) // 2
+            else:
+                x_offset = int((paper_width - display_width) * image_item.offset_ratios[0])
+                
             y_offset = int((paper_height - display_height) * image_item.offset_ratios[1])
             return QPoint(x_offset, y_offset)
         return QPoint(0, 0)
