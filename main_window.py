@@ -9,6 +9,7 @@ from image_label import ImageLabel
 
 
 # ================== 按钮样式 ==================
+# 替换原有的 save_button_style 定义
 save_button_style = """
     QPushButton {
         background-color: qlineargradient(
@@ -21,23 +22,19 @@ save_button_style = """
         padding: 12px 28px;
         border: none;
         border-radius: 25px;
-        box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.25);
-        transition: all 0.3s ease;
     }
     QPushButton:hover {
         background-color: qlineargradient(
             spread:pad, x1:0, y1:0, x2:0, y2:1,
             stop:0 #5fcf76, stop:1 #3b6f9d
         );
-        transform: scale(1.05);
-        box-shadow: 0px 6px 12px rgba(0, 0, 0, 0.3);
+        padding: 12px 28px;  /* 保持与正常状态相同的padding */
     }
     QPushButton:pressed {
         background-color: #1f4b5d;
         padding: 13px 26px;
     }
 """
-
 # =============================================
 
 
@@ -120,6 +117,8 @@ class FloatingButtonWidget(QWidget):
         super().__init__(parent)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # 设置背景为透明
+        self.setStyleSheet("background-color: transparent;")
         
         # 创建按钮布局
         layout = QHBoxLayout(self)
