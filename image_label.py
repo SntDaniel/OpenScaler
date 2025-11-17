@@ -47,7 +47,7 @@ class ImageLabel(QLabel):
 
         self.btn_confirm = None
         self.btn_confirm_move = None
-        
+        self.setFocusPolicy(Qt.StrongFocus)  # 确保控件可以接收键盘焦点
         # 纸张设置
         self.paper_settings = {
             "size_name": "A4",
@@ -807,6 +807,15 @@ class ImageLabel(QLabel):
             if self._is_point_near_line(click_pos, gradient, image_index, tolerance=15):
                 self._open_length_dialog(i, "gradient", gradient, image_index)
                 return
+
+    def keyPressEvent(self, event):
+        """处理键盘按键事件"""
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # 如果正在绘制线条，确认线条
+            if self.temp_start and self.temp_end and self.allow_drawing:
+                self.confirm_line()
+                return
+        super().keyPressEvent(event)
 
     def show_context_menu(self, position):
         """显示右键菜单"""

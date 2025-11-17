@@ -134,7 +134,11 @@ class FloatingButtonWidget(QWidget):
         
         layout.addWidget(self.btn_confirm)
         layout.addWidget(self.btn_confirm_move)
-        
+        self.btn_confirm.setAutoDefault(True)  # 允许通过Enter键触发
+        self.btn_confirm.setDefault(False)     # 但不默认设置为默认按钮
+
+        self.btn_confirm_move.setAutoDefault(True)  # 允许通过Enter键触发
+        self.btn_confirm_move.setDefault(False)     # 但不默认设置为默认按钮
         self.adjustSize()
         
     def move_to_bottom_center(self, parent_rect):
@@ -293,12 +297,28 @@ class MainWindow(QMainWindow):
             else:
                 self.overlay.hide()   # 已经加载过，就保持隐藏
 
+    def keyPressEvent(self, event):
+        """处理全局键盘按键事件"""
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # 如果浮动按钮可见，触发相应的操作
+            if self.floating_buttons.isVisible():
+                if self.floating_buttons.btn_confirm.isVisible() and self.floating_buttons.btn_confirm.isEnabled():
+                    self.floating_buttons.btn_confirm.click()
+                    return
+                elif self.floating_buttons.btn_confirm_move.isVisible() and self.floating_buttons.btn_confirm_move.isEnabled():
+                    self.floating_buttons.btn_confirm_move.click()
+                    return
+        super().keyPressEvent(event)
+
     def enable_single(self):
         self.image_label.set_drawing_enabled(True, mode="single", clear_previous=True)
         self.floating_buttons.show_buttons("draw")
         # 退出移动模式
         self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
+        # 设置焦点到 image_label 以便接收键盘事件
+        self.image_label.setFocus()
+
 
     def enable_gradient(self):
         self.image_label.set_drawing_enabled(True, mode="gradient", clear_previous=True)
@@ -306,6 +326,8 @@ class MainWindow(QMainWindow):
         # 退出移动模式
         self.move_image_action.setChecked(False)
         self.image_label.set_image_move_mode(False)
+        # 设置焦点到 image_label 以便接收键盘事件
+        self.image_label.setFocus()
 
     def update_statusbar(self, factor):
         self.statusBar().showMessage(f"缩放: {int(factor*100)}%")
