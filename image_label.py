@@ -4,7 +4,7 @@ import math
 from PySide6.QtWidgets import (
     QLabel, QMessageBox, QDialog, QScrollArea, QMenu
 )
-from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor
+from PySide6.QtGui import QPixmap, QPainter, QPen, QMouseEvent, QColor, QCursor
 from PySide6.QtCore import Qt, QPoint, Signal, QRectF
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtGui import QPageSize, QPageLayout
@@ -21,6 +21,10 @@ class ImageItem:
         self.image_scale_factor = 1.0
         self.lines = []
         self.gradients = []
+        
+        # 存储在屏幕(widget)上的实际显示尺寸
+        self.display_width_on_widget = 0
+        self.display_height_on_widget = 0
         
 
 class ImageLabel(QLabel):
@@ -70,6 +74,16 @@ class ImageLabel(QLabel):
         self.context_menu = QMenu(self)
         self.delete_action = self.context_menu.addAction("删除图片")
         self.delete_action.triggered.connect(self.delete_selected_image)
+        
+        # --- 修改/新增代码 ---
+        # 吸附阈值, 单位: 屏幕像素
+        self.edge_snap_threshold_press = 4
+        self.edge_snap_threshold_drag = 4
+        
+        # --- 新增代码 ---
+        # 用于防止光标翘曲(warp)时抖动
+        self.last_warped_pos = None
+        # ----------------
 
     def set_paper_settings(self, settings):
         """设置纸张参数"""
@@ -250,6 +264,10 @@ class ImageLabel(QLabel):
                 display_width = int(image_item.pixmap.width() * image_item.image_scale_factor * display_scale * self.scale_factor)
                 display_height = int(image_item.pixmap.height() * image_item.image_scale_factor * display_scale * self.scale_factor)
                 
+                # 存储这些值以便 _get_snapped_image_coords 使用
+                image_item.display_width_on_widget = display_width
+                image_item.display_height_on_widget = display_height
+                
                 # 使用更高的质量缩放
                 scaled_image = image_item.pixmap.scaled(display_width, display_height, 
                                                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -353,6 +371,14 @@ class ImageLabel(QLabel):
         self.temp_start = None
         self.temp_end = None
         self.drawing_active = False
+        
+        if enabled:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            # 如果不在移动模式，则重置为箭头
+            if not self.image_move_mode:
+                self.setCursor(Qt.ArrowCursor)
+        
         self.update()
 
     def set_image_move_mode(self, enabled: bool):
@@ -378,6 +404,67 @@ class ImageLabel(QLabel):
         img_x = (screen_x - image_item.image_offset.x()) / (image_item.image_scale_factor * display_scale * self.scale_factor)
         img_y = (screen_y - image_item.image_offset.y()) / (image_item.image_scale_factor * display_scale * self.scale_factor)
         return (img_x, img_y)
+
+    def _get_snapped_image_coords(self, pos, image_index, threshold=None):
+        """
+        将屏幕坐标转换为图像坐标，并应用基于屏幕像素的边缘吸附。
+        返回: (snapped_img_x, snapped_img_y, hovered_edge_x, hovered_edge_y)
+        """
+        if image_index < 0 or image_index >= len(self.images):
+            return (0, 0, None, None)
+        
+        # 如果没有提供阈值，则使用拖动时的阈值
+        if threshold is None:
+            threshold = self.edge_snap_threshold_drag
+            
+        image_item = self.images[self.selected_image_index]
+        if not image_item.pixmap:
+            # 即使没有pixmap，也尝试转换（尽管结果可能是0,0）
+            raw_x, raw_y = self._screen_to_image_coords(pos.x(), pos.y(), image_index)
+            return (raw_x, raw_y, None, None)
+            
+        # 1. 转换到原始图像坐标
+        img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y(), image_index)
+        
+        # 2. 检查屏幕空间中的接近度
+        offset = image_item.image_offset
+        w = image_item.display_width_on_widget
+        h = image_item.display_height_on_widget
+        x, y = pos.x(), pos.y()
+        
+        snapped_img_x = img_x
+        snapped_img_y = img_y
+        hovered_edge_x = None
+        hovered_edge_y = None
+        
+        pixmap_w = image_item.pixmap.width()
+        pixmap_h = image_item.pixmap.height()
+        
+        # 检查 X 边缘
+        if abs(x - offset.x()) < threshold:
+            snapped_img_x = 0
+            hovered_edge_x = 'left'
+        elif abs(x - (offset.x() + w)) < threshold:
+            snapped_img_x = pixmap_w
+            hovered_edge_x = 'right'
+            
+        # 检查 Y 边缘
+        if abs(y - offset.y()) < threshold:
+            snapped_img_y = 0
+            hovered_edge_y = 'top'
+        elif abs(y - (offset.y() + h)) < threshold:
+            snapped_img_y = pixmap_h
+            hovered_edge_y = 'bottom'
+            
+        return (snapped_img_x, snapped_img_y, hovered_edge_x, hovered_edge_y)
+
+    def leaveEvent(self, event):
+        """当鼠标离开小部件时重置状态"""
+        if self.allow_drawing:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+        super().leaveEvent(event)
 
     def _image_to_screen_coords(self, img_x, img_y, image_index):
         """将指定图片的坐标（像素单位）转换为屏幕坐标"""
@@ -458,43 +545,88 @@ class ImageLabel(QLabel):
             # 只有当选中了图片时才能绘图
             if self.selected_image_index >= 0:
                 pos = event.position().toPoint()
+
+                # --- 新增代码 ---
+                # 重置光标翘曲状态
+                self.last_warped_pos = None
+                # ----------------
+                
+                # --- 修改代码 ---
                 # 转换为相对于选中图片的坐标（以原始图片像素为单位）
-                img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
-                self.temp_start = (img_x, img_y)
+                # 并应用边缘吸附 (使用按下时的阈值)
+                snapped_img_x, snapped_img_y, hx, hy = self._get_snapped_image_coords(pos, self.selected_image_index, self.edge_snap_threshold_press)
+                
+                # 应用光标锁定逻辑（与mouseMoveEvent中相同）
+                raw_img_x, raw_img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
+                final_img_x = raw_img_x
+                final_img_y = raw_img_y
+
+                image_item = self.images[self.selected_image_index]
+                offset = image_item.image_offset
+                
+                new_screen_pos = QPoint(pos.x(), pos.y())
+                warped = False
+
+                # 检查是否需要锁定X轴（吸附到垂直边缘）
+                if hx:
+                    locked_screen_x = offset.x() if hx == 'left' else offset.x() + image_item.display_width_on_widget
+                    new_screen_pos.setX(locked_screen_x)
+                    final_img_x = snapped_img_x  # X轴被锁定到吸附的图像坐标
+                    warped = True
+                
+                # 检查是否需要锁定Y轴（吸附到水平边缘）
+                if hy:
+                    locked_screen_y = offset.y() if hy == 'top' else offset.y() + image_item.display_height_on_widget
+                    new_screen_pos.setY(locked_screen_y)
+                    final_img_y = snapped_img_y  # Y轴被锁定到吸附的图像坐标
+                    warped = True
+
+                # 如果光标位置被修改 (warped)
+                if warped:
+                    # 记录我们将要移动到的位置
+                    self.last_warped_pos = new_screen_pos
+                    # 强制移动操作系统光标
+                    QCursor.setPos(self.mapToGlobal(new_screen_pos))
+                
+                self.temp_start = (final_img_x, final_img_y)
+                # ---------------------
+                
                 self.temp_end = self.temp_start
                 self.drawing_active = True
-                self.update()
-                
+                self.update()         
     def mouseMoveEvent(self, event: QMouseEvent):
+        pos = event.position().toPoint()
+        
+        # --- 新增代码：事件过滤器 ---
+        # 如果此事件是由我们自己设置光标位置(setPos)触发的，则忽略它
+        if pos == self.last_warped_pos:
+            self.last_warped_pos = None
+            return
+        # --- 过滤器结束 ---
+        
         if self.image_dragging and self.image_move_mode and self.selected_image_index >= 0:
             # 移动图片
             image_item = self.images[self.selected_image_index]
             if image_item.pixmap:
-                # 计算当前纸张尺寸
+                # ... (内部逻辑不变) ...
                 display_scale = 8
                 paper_width = int(self.paper_settings["width_mm"] * display_scale * self.scale_factor)
                 paper_height = int(self.paper_settings["height_mm"] * display_scale * self.scale_factor)
                 
-                # 计算图片尺寸
                 display_width = int(image_item.pixmap.width() * image_item.image_scale_factor * display_scale * self.scale_factor)
                 display_height = int(image_item.pixmap.height() * image_item.image_scale_factor * display_scale * self.scale_factor)
                 
-                # 计算可移动范围
                 max_x_offset = max(0, paper_width - display_width)
                 max_y_offset = max(0, paper_height - display_height)
                 
-                # 计算鼠标拖动偏移
-                delta = event.position().toPoint() - self.image_drag_start_pos
+                delta = pos - self.image_drag_start_pos
                 
-                # 计算新位置 - 使用保存的实际原始偏移量
                 new_x = self.original_image_offset.x() + delta.x()
                 new_y = self.original_image_offset.y() + delta.y()
                 
-                # 限制在纸张范围内
                 new_x = max(0, min(new_x, max_x_offset))
                 new_y = max(0, min(new_y, max_y_offset))
                 
-                # 计算新的边距比例
                 if max_x_offset > 0:
                     x_ratio = new_x / max_x_offset
                 else:
@@ -512,15 +644,58 @@ class ImageLabel(QLabel):
             return
             
         if self.temp_start and self.allow_drawing and self.drawing_active and self.selected_image_index >= 0:
-            pos = event.position().toPoint()
-            # 转换为相对于选中图片的坐标（以原始图片像素为单位）
-            img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
-            ex, ey = img_x, img_y
-            dx = ex - self.temp_start[0]
-            dy = ey - self.temp_start[1]
-            dx, dy = snap_angle(dx, dy, threshold_deg=1)
+            
+            # --- 全新的光标吸附和锁定逻辑 ---
+            
+            # 1. 获取原始鼠标位置对应的吸附信息
+            snapped_img_x, snapped_img_y, hx, hy = self._get_snapped_image_coords(pos, self.selected_image_index, self.edge_snap_threshold_drag)
+            
+            # 2. 准备变量
+            # (snapped_img_x/y 是 _get_snapped_image_coords 已经吸附过的)
+            raw_img_x, raw_img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
+            final_img_x = raw_img_x # 默认使用原始图像坐标
+            final_img_y = raw_img_y # 默认使用原始图像坐标
+
+            image_item = self.images[self.selected_image_index]
+            offset = image_item.image_offset
+            
+            new_screen_pos = QPoint(pos.x(), pos.y())
+            warped = False
+
+            # 3. 检查是否需要锁定X轴（吸附到垂直边缘）
+            if hx:
+                locked_screen_x = offset.x() if hx == 'left' else offset.x() + image_item.display_width_on_widget
+                new_screen_pos.setX(locked_screen_x)
+                final_img_x = snapped_img_x # X轴被锁定到吸附的图像坐标
+                warped = True
+            
+            # 4. 检查是否需要锁定Y轴（吸附到水平边缘）
+            if hy:
+                locked_screen_y = offset.y() if hy == 'top' else offset.y() + image_item.display_height_on_widget
+                new_screen_pos.setY(locked_screen_y)
+                final_img_y = snapped_img_y # Y轴被锁定到吸附的图像坐标
+                warped = True
+
+            # 5. 如果光标位置被修改 (warped)
+            if warped:
+                # 记录我们将要移动到的位置
+                self.last_warped_pos = new_screen_pos
+                # 强制移动操作系统光标
+                QCursor.setPos(self.mapToGlobal(new_screen_pos))
+            else:
+                # 没有翘曲，清除标记
+                self.last_warped_pos = None
+            
+            # --- 光标吸附逻辑结束 ---
+
+            # 6. 计算并设置线条的终点
+            dx = final_img_x - self.temp_start[0]
+            dy = final_img_y - self.temp_start[1]
+            
+            dx, dy = snap_angle(dx, dy, threshold_deg=1) # 仍然应用角度吸附
             self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
             self.update()
+
         elif self.dragging and self.last_mouse_pos:
             delta = event.globalPosition().toPoint() - self.last_mouse_pos
             scroll_area = self.get_scroll_area()
@@ -528,6 +703,43 @@ class ImageLabel(QLabel):
                 scroll_area.horizontalScrollBar().setValue(scroll_area.horizontalScrollBar().value()-delta.x())
                 scroll_area.verticalScrollBar().setValue(scroll_area.verticalScrollBar().value()-delta.y())
             self.last_mouse_pos = event.globalPosition().toPoint()
+            
+        elif self.allow_drawing and self.selected_image_index >= 0 and not self.image_dragging:
+            # ======== 新增：第一次点击前也执行边缘吸附 ========
+
+            snapped_img_x, snapped_img_y, hx, hy = self._get_snapped_image_coords(
+                pos, self.selected_image_index, self.edge_snap_threshold_drag
+            )
+
+            image_item = self.images[self.selected_image_index]
+            offset = image_item.image_offset
+
+            new_screen_pos = QPoint(pos.x(), pos.y())
+            warped = False
+
+            # 锁定 X（靠近左/右边缘）
+            if hx:
+                locked_screen_x = offset.x() if hx == 'left' else offset.x() + image_item.display_width_on_widget
+                new_screen_pos.setX(locked_screen_x)
+                warped = True
+
+            # 锁定 Y（靠近上/下边缘）
+            if hy:
+                locked_screen_y = offset.y() if hy == 'top' else offset.y() + image_item.display_height_on_widget
+                new_screen_pos.setY(locked_screen_y)
+                warped = True
+
+            # 执行光标 Warp（避免循环事件）
+            if warped and new_screen_pos != self.last_warped_pos:
+                self.last_warped_pos = new_screen_pos
+                QCursor.setPos(self.mapToGlobal(new_screen_pos))
+            else:
+                self.last_warped_pos = None
+
+            # ======== 原来只是更新光标，这里保留 ========
+            if not self.image_move_mode:
+                self.setCursor(Qt.CrossCursor)
+
             
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -542,14 +754,28 @@ class ImageLabel(QLabel):
                 return
             if self.allow_drawing and self.temp_start and self.drawing_active and self.selected_image_index >= 0:
                 pos = event.position().toPoint()
-                # 转换为相对于选中图片的坐标（以原始图片像素为单位）
-                img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
+                
+                # --- 新增代码 ---
+                # 释放鼠标时，清除翘曲状态
+                self.last_warped_pos = None
+                # ----------------
+                
+                # --- (以下代码已存在) ---
+                # 获取吸附后的最终坐标
+                img_x, img_y, hx, hy = self._get_snapped_image_coords(pos, self.selected_image_index)
                 ex, ey = img_x, img_y
+                
                 dx = ex - self.temp_start[0]
                 dy = ey - self.temp_start[1]
+                # ---------------------
+
                 dx, dy = snap_angle(dx, dy, threshold_deg=1)
                 self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
                 self.drawing_active = False
+                
+                if not self.image_move_mode:
+                    self.setCursor(Qt.CrossCursor) 
+                
                 self.update()
             self.dragging = False
 
@@ -755,6 +981,8 @@ class ImageLabel(QLabel):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.drawPixmap(0, 0, self.pixmap())
+        
+        # 重置为默认的线笔刷
         pen = QPen(self.line_color, 2)
         painter.setPen(pen)
         

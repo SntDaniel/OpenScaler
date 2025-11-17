@@ -125,7 +125,7 @@ class FloatingButtonWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         
         self.btn_confirm = QPushButton("确认画线")
-        self.btn_confirm_move = QPushButton("确认移动")
+        self.btn_confirm_move = QPushButton("确认位置")
         self.btn_confirm_move.hide()
 
         # 应用统一按钮样式
