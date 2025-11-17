@@ -174,6 +174,7 @@ class ImageLabel(QLabel):
             first_image = self.images[0]
             # 设置水平居中，垂直方向5%
             first_image.offset_ratios = (0.5, 0.05)
+            
     def add_image(self, path):
         """添加新图片到页面"""
         self.load_image_on_paper(path)
@@ -594,6 +595,7 @@ class ImageLabel(QLabel):
                 self.temp_end = self.temp_start
                 self.drawing_active = True
                 self.update()         
+                
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
         

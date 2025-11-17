@@ -1,15 +1,16 @@
+# main_window.py
 # 包含 MainWindow 类，负责主界面布局和菜单 
 from PySide6.QtWidgets import (
     QMainWindow, QFileDialog, QPushButton,
-    QVBoxLayout, QWidget, QHBoxLayout, QScrollArea, QButtonGroup, QRadioButton, QDialog, QFormLayout, QComboBox, QMenu
+    QVBoxLayout, QWidget, QHBoxLayout, QScrollArea, QButtonGroup, QRadioButton, QDialog, QFormLayout, QComboBox, QMenu, QMessageBox
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt, QRect
+from PySide6.QtCore import Qt
 from image_label import ImageLabel
+from datetime import datetime
 
 
 # ================== 按钮样式 ==================
-# 替换原有的 save_button_style 定义
 save_button_style = """
     QPushButton {
         background-color: qlineargradient(
@@ -28,11 +29,9 @@ save_button_style = """
             spread:pad, x1:0, y1:0, x2:0, y2:1,
             stop:0 #5fcf76, stop:1 #3b6f9d
         );
-        padding: 12px 28px;  /* 保持与正常状态相同的padding */
     }
     QPushButton:pressed {
         background-color: #1f4b5d;
-        padding: 13px 26px;
     }
 """
 # =============================================
@@ -80,13 +79,8 @@ class PaperSettingsDialog(QDialog):
         
         # 添加确定和取消按钮
         buttons = QHBoxLayout()
-        from PySide6.QtWidgets import QPushButton
         ok_button = QPushButton("确定")
         cancel_button = QPushButton("取消")
-
-        # 应用按钮样式
-        # ok_button.setStyleSheet(save_button_style)
-        # cancel_button.setStyleSheet(save_button_style)
 
         ok_button.clicked.connect(self.accept)
         cancel_button.clicked.connect(self.reject)
@@ -134,11 +128,11 @@ class FloatingButtonWidget(QWidget):
         
         layout.addWidget(self.btn_confirm)
         layout.addWidget(self.btn_confirm_move)
-        self.btn_confirm.setAutoDefault(True)  # 允许通过Enter键触发
-        self.btn_confirm.setDefault(False)     # 但不默认设置为默认按钮
+        self.btn_confirm.setAutoDefault(True)
+        self.btn_confirm.setDefault(False)
 
-        self.btn_confirm_move.setAutoDefault(True)  # 允许通过Enter键触发
-        self.btn_confirm_move.setDefault(False)     # 但不默认设置为默认按钮
+        self.btn_confirm_move.setAutoDefault(True)
+        self.btn_confirm_move.setDefault(False)
         self.adjustSize()
         
     def move_to_bottom_center(self, parent_rect):
@@ -351,21 +345,17 @@ class MainWindow(QMainWindow):
 
     def export_pdf(self):
         if not self.image_loaded:
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "导出失败", "请先加载图片")
             return
             
         # 生成基于当前时间的默认文件名
-        from datetime import datetime
         default_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         
         file_path, _ = QFileDialog.getSaveFileName(self, "导出为PDF", default_filename, "PDF Files (*.pdf)")
         if file_path:
             if self.image_label.export_to_pdf(file_path, self.paper_settings):
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "导出成功", f"PDF文件已保存到: {file_path}")
             else:
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "导出失败", "导出PDF时发生错误")
                 
     def toggle_image_move(self, checked):

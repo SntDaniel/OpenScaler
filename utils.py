@@ -1,3 +1,4 @@
+# utils.py
 # 包含通用的工具函数
 import math
 from PySide6.QtCore import QPoint
@@ -48,5 +49,3 @@ def point_to_line_distance(point, line_start, line_end):
     dy = y - yy
     dist = math.sqrt(dx * dx + dy * dy)
     return dist
-
-

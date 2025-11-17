@@ -1,5 +1,5 @@
+# dialogs.py
 # 包含所有对话框类
-import sys
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QComboBox, QHBoxLayout, QWidget
 )
