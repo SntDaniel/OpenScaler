@@ -145,7 +145,6 @@ class FloatingButtonWidget(QWidget):
     def hide_buttons(self):
         self.hide()
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -250,31 +249,27 @@ class MainWindow(QMainWindow):
         self.floating_buttons.move_to_bottom_center(self.rect())
 
     def load_image(self):
-            files, _ = QFileDialog.getOpenFileNames(
-                self, 
-                "选择图片", 
-                "", 
-                "Images (*.png *.jpg *.bmp *.jpeg)"
-            )
+        files, _ = QFileDialog.getOpenFileNames(
+            self, 
+            "选择图片", 
+            "", 
+            "Images (*.png *.jpg *.bmp *.jpeg)"
+        )
+        
+        if files:
+            self.image_label.add_images(files, self.paper_settings)
+            self.floating_buttons.show_buttons("move")
+            self.move_image_action.setChecked(True) # 同步菜单栏状态
+            self.overlay.hide()
+            self.image_loaded = True
             
-            if files:
-                self.image_label.add_images(files, self.paper_settings)
-                
-                if not self.image_loaded:
-                    self.floating_buttons.show_buttons("move")
-                else:
-                    self.floating_buttons.hide_buttons()
-                
+            if not self.export_pdf_action.isEnabled():
+                self.set_menu_enabled(True)
+        else:
+            if not self.image_loaded and not self.image_label.images:
+                self.overlay.show()
+            elif self.image_loaded:
                 self.overlay.hide()
-                self.image_loaded = True
-                
-                if not self.export_pdf_action.isEnabled():
-                    self.set_menu_enabled(True)
-            else:
-                if not self.image_loaded and not self.image_label.images:
-                    self.overlay.show()
-                elif self.image_loaded:
-                    self.overlay.hide()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):

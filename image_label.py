@@ -168,13 +168,13 @@ class ImageLabel(QLabel):
         self.scale_changed.emit(1.0)
         
         self.set_image_move_mode(True)
+        # 修复：确保确认移动按钮显示
         if self.btn_confirm_move:
             self.btn_confirm_move.show()
         
         main_window = self.window()
         if hasattr(main_window, 'statusBar'):
             main_window.statusBar().showMessage(f"已加载 {added_count} 张图片。拖拽可调整位置，点击确认完成。")
-
     def _calculate_initial_scale_for_image(self, image_index, is_batch_mode=False):
         if not (0 <= image_index < len(self.images)):
             return
@@ -874,6 +874,20 @@ class ImageLabel(QLabel):
         self._update_paper_display()
         self.update()
         
+        # 进入图片移动模式
+        self.set_image_move_mode(True)
+        
+        # 通知主窗口显示移动确认按钮
+        main_window = self.window()
+        if hasattr(main_window, 'floating_buttons'):
+            main_window.floating_buttons.show_buttons("move")
+        if hasattr(main_window, 'move_image_action'):
+            main_window.move_image_action.setChecked(True)
+        
+        # 显示状态信息
+        if hasattr(main_window, 'statusBar'):
+            main_window.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
+        
         image_item = self.images[image_index]
         
         for i, line in enumerate(image_item.lines):
@@ -960,18 +974,44 @@ class ImageLabel(QLabel):
                 QMessageBox.warning(self, "输入错误", "请输入有效的数字")
 
     def _adjust_image_scale(self, line, real_length_mm, image_index):
-        pixel_length = math.dist(line["start"], line["end"])
-        if pixel_length <= 0:
-            return
+            pixel_length = math.dist(line["start"], line["end"])
+            if pixel_length <= 0:
+                return
+                
+            new_scale = real_length_mm / pixel_length
             
-        new_scale = real_length_mm / pixel_length
-        
-        if image_index >= 0:
-            image_item = self.images[image_index]
-            image_item.image_scale_factor = new_scale
-            self._update_paper_display()
-            self.window().statusBar().showMessage(f"图片已根据参考长度调整缩放: 1像素 = {new_scale:.4f}毫米")
-
+            # =========== 新增检测逻辑 ===========
+            if image_index >= 0:
+                image_item = self.images[image_index]
+                if image_item.pixmap:
+                    # 1. 计算应用新比例后的图片物理尺寸 (mm)
+                    # image_scale_factor 的含义是 mm/pixel
+                    potential_width_mm = image_item.pixmap.width() * new_scale
+                    potential_height_mm = image_item.pixmap.height() * new_scale
+                    
+                    # 2. 获取纸张尺寸 (mm)
+                    paper_w_mm = self.paper_settings["width_mm"]
+                    paper_h_mm = self.paper_settings["height_mm"]
+                    
+                    # 3. 比较：如果宽或高任一维度超出纸张，则拦截
+                    # 使用 > 允许刚好填满，但在计算浮点误差时可能会有点风险，
+                    # 如果非常严格可以给一点容差，这里直接判断是否超出
+                    if potential_width_mm > paper_w_mm or potential_height_mm > paper_h_mm:
+                        QMessageBox.warning(
+                            self, 
+                            "尺寸过大", 
+                            f"操作已取消！\n\n"
+                            f"输入的长度会导致图片超出纸张范围。\n"
+                            f"当前纸张: {paper_w_mm} x {paper_h_mm} mm\n"
+                        )
+                        return # 终止函数，不执行缩放
+            # ==================================
+            
+            if image_index >= 0:
+                image_item = self.images[image_index]
+                image_item.image_scale_factor = new_scale
+                self._update_paper_display()
+                self.window().statusBar().showMessage(f"图片已根据参考长度调整缩放: 1像素 = {new_scale:.4f}毫米")
     def confirm_line(self):
         if self.temp_start and self.temp_end and self.selected_image_index >= 0:
             new_line = {"start": self.temp_start, "end": self.temp_end, "scale_ratio": None}
