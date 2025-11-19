@@ -22,7 +22,7 @@ class LengthInputDialog(QDialog):
         
         self.unit_combo = QComboBox()
         self.unit_combo.addItems(["mm", "cm", "inch"])
-        self.unit_combo.setCurrentText("mm")  # 默认单位为mm
+        self.unit_combo.setCurrentText("cm")  # 默认单位为cm
         
         input_layout.addWidget(self.length_input)
         input_layout.addWidget(self.unit_combo)
