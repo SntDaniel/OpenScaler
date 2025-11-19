@@ -81,7 +81,7 @@ class ImageLabel(QLabel):
         # 多图片支持
         self.images = []
         self.selected_image_index = -1
-        self.next_image_offset_ratio = (0.05, 0.05)
+        # self.next_image_offset_ratio 已不再需要，由自动排版代替
         
         # 图片移动相关属性
         self.image_move_mode = False
@@ -109,14 +109,9 @@ class ImageLabel(QLabel):
         old_settings = self.paper_settings.copy()
         self.paper_settings = settings
         if self.images:
-            self._update_image_positions_for_new_paper(old_settings)
+            # 纸张改变时，我们可以选择重新排版或者保持相对位置
+            # 这里保持相对位置不变（无需额外操作，因为存储的是 ratio）
             self._update_paper_display()
-
-    def _update_image_positions_for_new_paper(self, old_settings):
-        """根据新纸张尺寸更新图片位置（保持相对比例）"""
-        # 这里的逻辑其实很简单：因为我们存储的是 ratios，所以其实不需要做复杂的转换，
-        # 只需要确保 ratios 保持不变即可。原代码逻辑是正确的，不需要显式计算旧尺寸。
-        pass 
 
     def get_scroll_area(self):
         p = self.parentWidget()
@@ -127,38 +122,46 @@ class ImageLabel(QLabel):
         return None
 
     def load_image_on_paper(self, path, paper_settings=None):
-        """在纸上加载图片"""
+        """兼容旧接口：加载单张图片"""
+        self.add_images([path], paper_settings)
+
+    def add_images(self, paths, paper_settings=None):
+        """批量添加图片并自动排版"""
         if paper_settings:
             self.paper_settings = paper_settings
             
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            QMessageBox.warning(self, "加载失败", "无法加载图片。")
-            return
-            
-        is_first_image = len(self.images) == 0
+        new_images_start_index = len(self.images)
+        added_count = 0
         
-        if is_first_image:
-            # 第一张图片居中放置
-            center_offset_ratio = (0.5, 0.05)
-            new_image = ImageItem(pixmap, center_offset_ratio)
-        else:
-            new_image = ImageItem(pixmap, self.next_image_offset_ratio)
+        for path in paths:
+            pixmap = QPixmap(path)
+            if pixmap.isNull():
+                continue
             
-        self.images.append(new_image)
+            # 创建新图片对象，初始位置给(0,0)，稍后自动排版会覆盖
+            new_image = ImageItem(pixmap, (0.0, 0.0))
+            self.images.append(new_image)
+            added_count += 1
+            
+        if added_count == 0:
+            # 如果没有添加成功（可能是无效路径或空列表）
+            if not self.images: 
+                QMessageBox.warning(self, "加载失败", "无法加载图片。")
+            return
+
+        # 选中最后一张
         self.selected_image_index = len(self.images) - 1
         
-        # 计算初始缩放因子
-        self._calculate_initial_scale_for_image(self.selected_image_index)
+        # 1. 计算初始缩放
+        # 如果是一次性导入多张，或者画布上已经有图片，则视为批量/追加模式
+        # 这种模式下我们将图片默认缩放得更小一点，方便排列
+        is_batch_mode = len(paths) > 1 or new_images_start_index > 0
         
-        if is_first_image:
-            self._center_first_image()
-        
-        # 更新下一张图片的偏移位置比例
-        self.next_image_offset_ratio = (
-            min(0.9, self.next_image_offset_ratio[0] + 0.05),
-            min(0.9, self.next_image_offset_ratio[1] + 0.05)
-        )
+        for i in range(new_images_start_index, len(self.images)):
+            self._calculate_initial_scale_for_image(i, is_batch_mode=is_batch_mode)
+
+        # 2. 自动排版 (重新排列所有图片，防止重叠)
+        self._auto_arrange_images()
         
         self._update_paper_display()
         self.update()
@@ -170,16 +173,9 @@ class ImageLabel(QLabel):
         
         main_window = self.window()
         if hasattr(main_window, 'statusBar'):
-            main_window.statusBar().showMessage("图片移动模式: 点击并拖拽图片来移动位置，点击确认移动完成")
+            main_window.statusBar().showMessage(f"已加载 {added_count} 张图片。拖拽可调整位置，点击确认完成。")
 
-    def _center_first_image(self):
-        if len(self.images) > 0:
-            self.images[0].offset_ratios = (0.5, 0.05)
-            
-    def add_image(self, path):
-        self.load_image_on_paper(path)
-
-    def _calculate_initial_scale_for_image(self, image_index):
+    def _calculate_initial_scale_for_image(self, image_index, is_batch_mode=False):
         if not (0 <= image_index < len(self.images)):
             return
             
@@ -198,7 +194,91 @@ class ImageLabel(QLabel):
         scale_by_width = available_width_mm / pixmap.width()
         scale_by_height = available_height_mm / pixmap.height()
         
-        image_item.image_scale_factor = min(scale_by_width, scale_by_height)
+        base_scale = min(scale_by_width, scale_by_height)
+        
+        # 如果是批量导入，缩小到 45% 左右，类似缩略图排列
+        if is_batch_mode:
+            image_item.image_scale_factor = base_scale * 0.45
+        else:
+            image_item.image_scale_factor = base_scale
+
+    def _auto_arrange_images(self):
+        """
+        流式布局算法：从左到右放置，放不下就换行。
+        计算出的位置将被转换为 offset_ratios。
+        """
+        if not self.images:
+            return
+
+        # 使用模拟的像素尺寸进行计算 (基于 scale_factor=1.0)
+        # 这样计算出的 ratio 是通用的
+        simulated_scale = 1.0
+        display_scale = self.DISPLAY_SCALE # 8 pixels per mm
+        
+        paper_w = int(self.paper_settings["width_mm"] * display_scale)
+        paper_h = int(self.paper_settings["height_mm"] * display_scale)
+        
+        # 布局参数
+        padding = int(5 * display_scale) # 5mm 间距
+        margin_top = int(10 * display_scale)
+        margin_left = int(10 * display_scale)
+        
+        current_x = margin_left
+        current_y = margin_top
+        row_max_height = 0
+        
+        for img in self.images:
+            if not img.pixmap:
+                continue
+                
+            # 计算图片在 scale=1.0 下的显示尺寸
+            img_w = int(img.pixmap.width() * img.image_scale_factor * display_scale * simulated_scale)
+            img_h = int(img.pixmap.height() * img.image_scale_factor * display_scale * simulated_scale)
+            
+            # 检查是否需要换行 (如果是第一张图，不需要换行)
+            if current_x + img_w > paper_w - margin_left and current_x > margin_left:
+                current_x = margin_left
+                current_y += row_max_height + padding
+                row_max_height = 0
+            
+            # 确保图片不会超出纸张底部太多（可选：如果超出底部，也可以继续往下排，反正ScrollArea能滚）
+            
+            # 计算 ratio
+            # pixel_offset = (paper_dim - img_dim) * ratio
+            # ratio = pixel_offset / (paper_dim - img_dim)
+            
+            free_w = paper_w - img_w
+            free_h = paper_h - img_h
+            
+            ratio_x = 0.0
+            ratio_y = 0.0
+            
+            if free_w != 0:
+                ratio_x = current_x / free_w
+            else:
+                ratio_x = 0.0 # 填满宽度时居左/居中均可，这里设0相当于居左(如果有margin的话)
+                
+            if free_h != 0:
+                ratio_y = current_y / free_h
+            else:
+                ratio_y = 0.0
+                
+            # 限制 ratio 范围（虽然数学上允许<0或>1表示出界，但为了UI体验最好限制一下）
+            # 注意：如果图片比纸张大，free_w < 0，此时除法结果符号会反，这里做个简单保护
+            if free_w > 0:
+                ratio_x = max(0.0, min(1.0, ratio_x))
+            
+            if free_h > 0:
+                ratio_y = max(0.0, min(1.0, ratio_y))
+            
+            img.offset_ratios = (ratio_x, ratio_y)
+            
+            # 更新游标
+            current_x += img_w + padding
+            row_max_height = max(row_max_height, img_h)
+
+    def add_image(self, path):
+        self.load_image_on_paper(path)
 
     def reload_image_on_paper(self, paper_settings):
         if self.images:
@@ -221,12 +301,13 @@ class ImageLabel(QLabel):
             display_width = image_item.display_width_on_widget
             display_height = image_item.display_height_on_widget
             
-            if image_item.offset_ratios[0] == 0.5:
-                x_offset = (paper_width - display_width) // 2
-            else:
-                x_offset = int((paper_width - display_width) * image_item.offset_ratios[0])
-                
-            y_offset = int((paper_height - display_height) * image_item.offset_ratios[1])
+            # 计算剩余空间
+            free_w = paper_width - display_width
+            free_h = paper_height - display_height
+            
+            x_offset = int(free_w * image_item.offset_ratios[0])
+            y_offset = int(free_h * image_item.offset_ratios[1])
+            
             return QPoint(x_offset, y_offset)
         return QPoint(0, 0)
 
@@ -266,6 +347,7 @@ class ImageLabel(QLabel):
                     painter.save()
                     pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
                     painter.setPen(pen)
+                    # 绘制外框
                     painter.drawRect(image_offset.x(), image_offset.y(), target_width, target_height)
                     painter.restore()
                 
@@ -361,9 +443,6 @@ class ImageLabel(QLabel):
         if not (0 <= image_index < len(self.images)):
             return 1.0
         image_item = self.images[image_index]
-        # image_scale_factor: mm/pixel
-        # DISPLAY_SCALE: pixel/mm
-        # scale_factor: zoom level
         return image_item.image_scale_factor * self.DISPLAY_SCALE * self.scale_factor
 
     def _screen_to_image_coords(self, screen_x, screen_y, image_index):
@@ -567,19 +646,30 @@ class ImageLabel(QLabel):
                 display_width = image_item.display_width_on_widget
                 display_height = image_item.display_height_on_widget
                 
-                max_x_offset = max(0, paper_width - display_width)
-                max_y_offset = max(0, paper_height - display_height)
+                # 剩余空间 = paper - display
+                free_w = paper_width - display_width
+                free_h = paper_height - display_height
                 
                 delta = pos - self.image_drag_start_pos
-                new_x = max(0, min(self.original_image_offset.x() + delta.x(), max_x_offset))
-                new_y = max(0, min(self.original_image_offset.y() + delta.y(), max_y_offset))
+                new_x = self.original_image_offset.x() + delta.x()
+                new_y = self.original_image_offset.y() + delta.y()
                 
-                x_ratio = new_x / max_x_offset if max_x_offset > 0 else 0.0
-                y_ratio = new_y / max_y_offset if max_y_offset > 0 else 0.0
+                # 限制在纸张范围内
+                if free_w > 0:
+                    new_x = max(0, min(new_x, free_w))
+                    x_ratio = new_x / free_w
+                else:
+                    x_ratio = 0.0
+                
+                if free_h > 0:
+                    new_y = max(0, min(new_y, free_h))
+                    y_ratio = new_y / free_h
+                else:
+                    y_ratio = 0.0
                 
                 image_item.offset_ratios = (x_ratio, y_ratio)
                 
-                # 关键优化：拖动时不需要重新生成 Pixmap，使用缓存重绘即可
+                # 拖动时缓存重绘
                 self._update_paper_display() 
                 self.update()
             return
@@ -634,18 +724,10 @@ class ImageLabel(QLabel):
                 self.last_warped_pos = None
                 
                 # 获取最终吸附坐标
-                _, fx, fy, _ = self._apply_warp_cursor(pos, self.selected_image_index, 0) # 阈值给0或者不需要再次Warp，只要计算坐标
-                # 注意：这里可以直接复用 mouseMove 计算的逻辑，或者重新计算。
-                # 为了准确，这里重新计算一次逻辑坐标
-                snapped_img_x, snapped_img_y, _, _ = self._get_snapped_image_coords(pos, self.selected_image_index)
-                img_x, img_y = self._screen_to_image_coords(pos.x(), pos.y(), self.selected_image_index)
+                _, fx, fy, _ = self._apply_warp_cursor(pos, self.selected_image_index, 0) 
                 
-                # 简单的逻辑：如果有吸附就用吸附，没有就用原始
-                # 但 _get_snapped_image_coords 已经包含了这个逻辑
-                ex, ey = snapped_img_x, snapped_img_y
-                
-                dx = ex - self.temp_start[0]
-                dy = ey - self.temp_start[1]
+                dx = fx - self.temp_start[0]
+                dy = fy - self.temp_start[1]
                 dx, dy = snap_angle(dx, dy, threshold_deg=1)
                 self.temp_end = (self.temp_start[0] + dx, self.temp_start[1] + dy)
                 self.drawing_active = False
@@ -786,8 +868,6 @@ class ImageLabel(QLabel):
             self.btn_confirm.hide()
 
     def _open_length_dialog_for_new_line(self, index, line_type, line, image_index):
-        # 复用 _open_length_dialog 的逻辑，这里只是转发调用
-        # 注意参数 line_type 在 _open_length_dialog 中期望 "line" 或 "gradient"
         type_str = "line" if line_type == "single" or line_type == "line" else "gradient"
         self._open_length_dialog(index, type_str, line, image_index)
 
@@ -856,26 +936,21 @@ class ImageLabel(QLabel):
         perp2_x, perp2_y = uy, -ux
         
         def draw_tip(point, is_start):
-            # 箭头方向：起始点向外，终点向内
             direction = 1 if is_start else -1
             
-            # 箭头主干方向点
             tip_x = point.x() - ux * arrow_size * direction
             tip_y = point.y() - uy * arrow_size * direction
             
-            # 箭翼端点
             wing1_x = tip_x + perp1_x * arrow_size * 0.5
             wing1_y = tip_y + perp1_y * arrow_size * 0.5
             wing2_x = tip_x + perp2_x * arrow_size * 0.5
             wing2_y = tip_y + perp2_y * arrow_size * 0.5
             
-            # 绘制箭翼
             painter.drawLine(point, QPoint(int(wing1_x), int(wing1_y)))
             painter.drawLine(point, QPoint(int(wing2_x), int(wing2_y)))
             
-        # 为起点和终点绘制箭头
-        draw_tip(sp, True)   # 起点箭头向外
-        draw_tip(ep, False)  # 终点箭头向内
+        draw_tip(sp, True)   
+        draw_tip(ep, False) 
 
     def _draw_gradient_like(self, painter, start, end, image_index, extend=2000):
         sp_x, sp_y = self._image_to_screen_coords(start[0], start[1], image_index)
@@ -915,13 +990,14 @@ class ImageLabel(QLabel):
         text_width = font_metrics.horizontalAdvance(txt)
         text_height = font_metrics.height()
         
-        painter.drawText(int(midx - text_width/2), int(midy + text_height/4), txt) # +height/4 to center vertically better
+        painter.drawText(int(midx - text_width/2), int(midy + text_height/4), txt) 
 
     def export_to_pdf(self, file_path, paper_settings):
         try:
             printer = QPrinter(QPrinter.HighResolution)
             printer.setOutputFormat(QPrinter.PdfFormat)
             printer.setOutputFileName(file_path)
+            printer.setResolution(600)  # 设置分辨率为600dpi
             
             size_map = {
                 "A4": QPageSize.A4, "A3": QPageSize.A3, "A5": QPageSize.A5,
@@ -940,7 +1016,7 @@ class ImageLabel(QLabel):
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             
-            dpi = printer.resolution()
+            dpi = printer.resolution()  # 现在应该是600
             page_rect = printer.pageRect(QPrinter.DevicePixel)
             page_width_px = page_rect.width()
             page_height_px = page_rect.height()
@@ -959,10 +1035,18 @@ class ImageLabel(QLabel):
                         Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
                     
-                    max_x_offset = max(0, page_width_px - display_width)
-                    max_y_offset = max(0, page_height_px - display_height)
-                    x_offset = int(max_x_offset * image_item.offset_ratios[0])
-                    y_offset = int(max_y_offset * image_item.offset_ratios[1])
+                    # 剩余空间 = page - display
+                    free_w = page_width_px - display_width
+                    free_h = page_height_px - display_height
+                    
+                    # 使用保存的 ratio 计算 offset
+                    # x_offset = free_w * ratio
+                    x_offset = int(free_w * image_item.offset_ratios[0])
+                    y_offset = int(free_h * image_item.offset_ratios[1])
+                    
+                    # 确保 offset 不会太离谱 (虽然理论上 ratio 0-1 没问题)
+                    x_offset = max(0, min(x_offset, page_width_px))
+                    y_offset = max(0, min(y_offset, page_height_px))
                     
                     painter.drawPixmap(x_offset, y_offset, scaled_image)
             

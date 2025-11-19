@@ -247,23 +247,34 @@ class MainWindow(QMainWindow):
         self.floating_buttons.move_to_bottom_center(self.rect())
 
     def load_image(self):
-        file, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.bmp *.jpeg)")
-        if file:
-            self.image_label.load_image_on_paper(file, self.paper_settings)
-            if not self.image_loaded:
-                self.floating_buttons.show_buttons("move")
-            else:
-                self.floating_buttons.hide_buttons()
-            self.overlay.hide()
-            self.image_loaded = True
+            # 修改 1: 使用 getOpenFileNames (注意有个 's') 允许选择多张图片
+            files, _ = QFileDialog.getOpenFileNames(
+                self, 
+                "选择图片", 
+                "", 
+                "Images (*.png *.jpg *.bmp *.jpeg)"
+            )
             
-            if not self.export_pdf_action.isEnabled():
-                self.set_menu_enabled(True)
-        else:
-            if not self.image_loaded:
-                self.overlay.show()
-            else:
+            if files:
+                # 修改 2: 调用 image_label 的批量添加方法
+                self.image_label.add_images(files, self.paper_settings)
+                
+                if not self.image_loaded:
+                    self.floating_buttons.show_buttons("move")
+                else:
+                    self.floating_buttons.hide_buttons()
+                
                 self.overlay.hide()
+                self.image_loaded = True
+                
+                if not self.export_pdf_action.isEnabled():
+                    self.set_menu_enabled(True)
+            else:
+                # 如果没有加载任何图片（且之前也没有图片），则显示覆盖层
+                if not self.image_loaded and not self.image_label.images:
+                    self.overlay.show()
+                elif self.image_loaded:
+                    self.overlay.hide()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
