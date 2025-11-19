@@ -357,48 +357,90 @@ class ImageLabel(QLabel):
         self.resize(paper_pixmap.size())
 
     def apply_zoom(self, factor, mouse_pos=None):
-        if not self.pixmap() or not self.images:
-            return
+            if not self.pixmap() or not self.images:
+                return
 
-        old_factor = self.scale_factor
-        self.scale_factor *= factor
-        self.scale_factor = max(0.1, min(5.0, self.scale_factor))
-        
-        scroll_area = self.get_scroll_area()
-        if scroll_area:
-            hbar = scroll_area.horizontalScrollBar()
-            vbar = scroll_area.verticalScrollBar()
+            scroll_area = self.get_scroll_area()
             
-            # 获取旧的纸张尺寸用于计算比率
-            old_paper_w = int(self.paper_settings["width_mm"] * self.DISPLAY_SCALE * old_factor)
-            old_paper_h = int(self.paper_settings["height_mm"] * self.DISPLAY_SCALE * old_factor)
+            # 1. 计算动态的最小缩放比例 (Fit Window)
+            min_scale = 0.1 # 默认保底值
+            if scroll_area:
+                vp = scroll_area.viewport()
+                # 获取视口当前的像素尺寸
+                vp_w = vp.width()
+                vp_h = vp.height()
+                
+                # 计算纸张在 scale=1.0 时的基准像素尺寸
+                base_w = self.paper_settings["width_mm"] * self.DISPLAY_SCALE
+                base_h = self.paper_settings["height_mm"] * self.DISPLAY_SCALE
+                
+                if base_w > 0 and base_h > 0:
+                    # 计算宽和高的适配比例
+                    ratio_w = vp_w / base_w
+                    ratio_h = vp_h / base_h
+                    # 取较小值，确保纸张完全显示在窗口内（顶住两边）
+                    min_scale = min(ratio_w, ratio_h)
+
+            # 2. 记录旧状态
+            old_factor = self.scale_factor
             
-            # 新的纸张尺寸
-            new_paper_w = int(self.paper_settings["width_mm"] * self.DISPLAY_SCALE * self.scale_factor)
-            new_paper_h = int(self.paper_settings["height_mm"] * self.DISPLAY_SCALE * self.scale_factor)
+            # 3. 计算新比例并应用限制
+            new_factor = self.scale_factor * factor
+            
+            # 【关键修改2】将下限设置为动态计算出的 min_scale
+            # 上限保持 5.0 或更高都可以
+            self.scale_factor = max(min_scale, min(5.0, new_factor))
+            
+            # 4. 计算实际生效的倍率 (用于修正鼠标位置)
+            if old_factor == 0: return
+            real_factor = self.scale_factor / old_factor
 
-            h_ratio = hbar.value() / old_paper_w if old_paper_w > 0 else 0
-            v_ratio = vbar.value() / old_paper_h if old_paper_h > 0 else 0
+            # 5. 执行以鼠标为中心的缩放逻辑
+            if scroll_area and mouse_pos:
+                hbar = scroll_area.horizontalScrollBar()
+                vbar = scroll_area.verticalScrollBar()
+                
+                new_h_val = hbar.value() + mouse_pos.x() * (real_factor - 1)
+                new_v_val = vbar.value() + mouse_pos.y() * (real_factor - 1)
+                
+                self._update_paper_display()
+                self.update()
+                
+                hbar.setValue(int(new_h_val))
+                vbar.setValue(int(new_v_val))
+            else:
+                # 无鼠标位置时的 Fallback 逻辑
+                old_paper_w = int(self.paper_settings["width_mm"] * self.DISPLAY_SCALE * old_factor)
+                old_paper_h = int(self.paper_settings["height_mm"] * self.DISPLAY_SCALE * old_factor)
+                
+                h_ratio = 0
+                v_ratio = 0
+                if scroll_area:
+                    h_ratio = scroll_area.horizontalScrollBar().value() / old_paper_w if old_paper_w > 0 else 0
+                    v_ratio = scroll_area.verticalScrollBar().value() / old_paper_h if old_paper_h > 0 else 0
 
-            self._update_paper_display()
-            self.update()
+                self._update_paper_display()
+                self.update()
 
-            hbar.setValue(int(h_ratio * new_paper_w))
-            vbar.setValue(int(v_ratio * new_paper_h))
-        else:
-            self._update_paper_display()
-            self.update()
+                if scroll_area:
+                    new_paper_w = int(self.paper_settings["width_mm"] * self.DISPLAY_SCALE * self.scale_factor)
+                    new_paper_h = int(self.paper_settings["height_mm"] * self.DISPLAY_SCALE * self.scale_factor)
+                    scroll_area.horizontalScrollBar().setValue(int(h_ratio * new_paper_w))
+                    scroll_area.verticalScrollBar().setValue(int(v_ratio * new_paper_h))
 
-        self.scale_changed.emit(self.scale_factor)
-
+            self.scale_changed.emit(self.scale_factor)
     def wheelEvent(self, event):
-        if not self.pixmap():
-            return
-        pos = event.position().toPoint()
-        if event.angleDelta().y() > 0:
-            self.apply_zoom(1.1, pos)
-        else:
-            self.apply_zoom(0.9, pos)
+            if not self.pixmap():
+                return
+            
+            # 【关键修改1】显式接受事件，阻止事件传递给 QScrollArea 导致滚动
+            event.accept()
+            
+            pos = event.position().toPoint()
+            if event.angleDelta().y() > 0:
+                self.apply_zoom(1.1, pos)
+            else:
+                self.apply_zoom(0.9, pos)
 
     def reset_zoom(self):
         if not self.images:

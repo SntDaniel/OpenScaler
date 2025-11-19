@@ -163,7 +163,10 @@ class MainWindow(QMainWindow):
         self.image_label = ImageLabel()
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidget(self.image_label)
-        self.scroll_area.setWidgetResizable(True)
+        
+        # 【关键修改】关闭 WidgetResizable
+        # 这将防止 ImageLabel 在小于窗口时被强制拉伸，从而配合 AlignCenter 实现居中
+        self.scroll_area.setWidgetResizable(False) 
         self.scroll_area.setAlignment(Qt.AlignCenter)
 
         self.floating_buttons = FloatingButtonWidget(self)
@@ -247,7 +250,6 @@ class MainWindow(QMainWindow):
         self.floating_buttons.move_to_bottom_center(self.rect())
 
     def load_image(self):
-            # 修改 1: 使用 getOpenFileNames (注意有个 's') 允许选择多张图片
             files, _ = QFileDialog.getOpenFileNames(
                 self, 
                 "选择图片", 
@@ -256,7 +258,6 @@ class MainWindow(QMainWindow):
             )
             
             if files:
-                # 修改 2: 调用 image_label 的批量添加方法
                 self.image_label.add_images(files, self.paper_settings)
                 
                 if not self.image_loaded:
@@ -270,7 +271,6 @@ class MainWindow(QMainWindow):
                 if not self.export_pdf_action.isEnabled():
                     self.set_menu_enabled(True)
             else:
-                # 如果没有加载任何图片（且之前也没有图片），则显示覆盖层
                 if not self.image_loaded and not self.image_label.images:
                     self.overlay.show()
                 elif self.image_loaded:
