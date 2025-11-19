@@ -203,79 +203,109 @@ class ImageLabel(QLabel):
             image_item.image_scale_factor = base_scale
 
     def _auto_arrange_images(self):
-        """
-        流式布局算法：从左到右放置，放不下就换行。
-        计算出的位置将被转换为 offset_ratios。
-        """
-        if not self.images:
-            return
+            """
+            优化后的流式布局：先计算分行，然后将每一行内容在纸张上【水平居中】。
+            """
+            if not self.images:
+                return
 
-        # 使用模拟的像素尺寸进行计算 (基于 scale_factor=1.0)
-        # 这样计算出的 ratio 是通用的
-        simulated_scale = 1.0
-        display_scale = self.DISPLAY_SCALE # 8 pixels per mm
-        
-        paper_w = int(self.paper_settings["width_mm"] * display_scale)
-        paper_h = int(self.paper_settings["height_mm"] * display_scale)
-        
-        # 布局参数
-        padding = int(5 * display_scale) # 5mm 间距
-        margin_top = int(10 * display_scale)
-        margin_left = int(10 * display_scale)
-        
-        current_x = margin_left
-        current_y = margin_top
-        row_max_height = 0
-        
-        for img in self.images:
-            if not img.pixmap:
-                continue
+            # 1. 准备计算参数
+            display_scale = self.DISPLAY_SCALE 
+            simulated_scale = 1.0
+            
+            paper_w = int(self.paper_settings["width_mm"] * display_scale)
+            paper_h = int(self.paper_settings["height_mm"] * display_scale)
+            
+            # 间距设置
+            padding = int(5 * display_scale)      # 图片间距
+            margin_top = int(10 * display_scale)  # 顶部边距
+            margin_side_min = int(10 * display_scale) # 最小侧边距（用于判断换行）
+            
+            # 可用于排版的最大内容宽度
+            max_content_width = paper_w - 2 * margin_side_min
+            
+            current_y = margin_top
+            
+            # --- 第一步：计算分行 ---
+            # rows 结构: [ ( [img1, img2], row_total_width, row_max_height ), ... ]
+            rows = [] 
+            
+            current_row_imgs = []  # 当前行的图片列表: [(image_item, width, height), ...]
+            current_row_w = 0      # 当前行已占用的宽度 (含padding)
+            current_row_h = 0      # 当前行最大高度
+            
+            for img in self.images:
+                if not img.pixmap:
+                    continue
+                    
+                # 计算该图在当前缩放下的尺寸
+                w = int(img.pixmap.width() * img.image_scale_factor * display_scale * simulated_scale)
+                h = int(img.pixmap.height() * img.image_scale_factor * display_scale * simulated_scale)
                 
-            # 计算图片在 scale=1.0 下的显示尺寸
-            img_w = int(img.pixmap.width() * img.image_scale_factor * display_scale * simulated_scale)
-            img_h = int(img.pixmap.height() * img.image_scale_factor * display_scale * simulated_scale)
-            
-            # 检查是否需要换行 (如果是第一张图，不需要换行)
-            if current_x + img_w > paper_w - margin_left and current_x > margin_left:
-                current_x = margin_left
-                current_y += row_max_height + padding
-                row_max_height = 0
-            
-            # 确保图片不会超出纸张底部太多（可选：如果超出底部，也可以继续往下排，反正ScrollArea能滚）
-            
-            # 计算 ratio
-            # pixel_offset = (paper_dim - img_dim) * ratio
-            # ratio = pixel_offset / (paper_dim - img_dim)
-            
-            free_w = paper_w - img_w
-            free_h = paper_h - img_h
-            
-            ratio_x = 0.0
-            ratio_y = 0.0
-            
-            if free_w != 0:
-                ratio_x = current_x / free_w
-            else:
-                ratio_x = 0.0 # 填满宽度时居左/居中均可，这里设0相当于居左(如果有margin的话)
+                # 判断是否需要换行:
+                # 如果当前行不是空的，并且 (当前宽 + 间距 + 新图宽) > 最大宽，则换行
+                if current_row_imgs and (current_row_w + padding + w > max_content_width):
+                    # 保存当前行
+                    rows.append((current_row_imgs, current_row_w, current_row_h))
+                    # 重置下一行
+                    current_row_imgs = []
+                    current_row_w = 0
+                    current_row_h = 0
                 
-            if free_h != 0:
-                ratio_y = current_y / free_h
-            else:
-                ratio_y = 0.0
+                # 加入当前行
+                # 如果不是这一行的第一张，要加上间距
+                if current_row_imgs:
+                    current_row_w += padding
                 
-            # 限制 ratio 范围（虽然数学上允许<0或>1表示出界，但为了UI体验最好限制一下）
-            # 注意：如果图片比纸张大，free_w < 0，此时除法结果符号会反，这里做个简单保护
-            if free_w > 0:
-                ratio_x = max(0.0, min(1.0, ratio_x))
-            
-            if free_h > 0:
-                ratio_y = max(0.0, min(1.0, ratio_y))
-            
-            img.offset_ratios = (ratio_x, ratio_y)
-            
-            # 更新游标
-            current_x += img_w + padding
-            row_max_height = max(row_max_height, img_h)
+                current_row_imgs.append((img, w, h))
+                current_row_w += w
+                current_row_h = max(current_row_h, h)
+                
+            # 循环结束，把最后一行也加上
+            if current_row_imgs:
+                rows.append((current_row_imgs, current_row_w, current_row_h))
+                
+            # --- 第二步：计算位置并应用 (行居中) ---
+            for row_imgs, row_w, row_h in rows:
+                # 核心逻辑：计算起始X坐标，使整行居中
+                # start_x = (纸张宽 - 行内容宽) / 2
+                start_x = (paper_w - row_w) / 2
+                
+                current_x = start_x
+                
+                for img_item, w, h in row_imgs:
+                    # 计算 ratio
+                    # 公式: pixel_offset = free_space * ratio
+                    # 所以: ratio = pixel_offset / free_space
+                    
+                    free_w = paper_w - w
+                    free_h = paper_h - h
+                    
+                    ratio_x = 0.0
+                    ratio_y = 0.0
+                    
+                    # 水平方向：根据计算出的 current_x 设定
+                    if free_w != 0:
+                        ratio_x = current_x / free_w
+                    else:
+                        # 图片和纸张一样宽，居左(即0)或居中(0.5)都行，这里用0.5稳妥
+                        ratio_x = 0.5
+                        
+                    # 垂直方向：保持原逻辑，从上往下排
+                    if free_h != 0:
+                        ratio_y = current_y / free_h
+                    
+                    # 限制范围 (0.0 - 1.0)，防止计算误差导致稍微出界
+                    if free_w > 0: ratio_x = max(0.0, min(1.0, ratio_x))
+                    if free_h > 0: ratio_y = max(0.0, min(1.0, ratio_y))
+                    
+                    img_item.offset_ratios = (ratio_x, ratio_y)
+                    
+                    # 移动 X 游标
+                    current_x += w + padding
+                
+                # 移动 Y 游标 (准备下一行)
+                current_y += row_h + padding
 
     def add_image(self, path):
         self.load_image_on_paper(path)
