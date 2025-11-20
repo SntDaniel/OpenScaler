@@ -60,7 +60,7 @@ class ImageLabel(QLabel):
 
         self.temp_start = None
         self.temp_end = None
-        self.line_color = QColor(Qt.red)
+        self.line_color = QColor("#FF003C")
 
         self.dragging = False
         self.last_mouse_pos = None
@@ -1134,26 +1134,57 @@ class ImageLabel(QLabel):
         painter.drawLine(ep + ext_vec, ep - ext_vec)
 
     def _draw_length_text(self, painter, line, image_index):
-        if "real_length" not in line:
-            return
+            if "real_length" not in line:
+                return
+                
+            if "original_value" in line and "original_unit" in line:
+                txt = f"{line['original_value']:.2f} {line['original_unit']}"
+            else:
+                txt = f"{line['real_length']:.2f} mm"
+                
+            p1, p2 = line["start"], line["end"]
+            sp_x, sp_y = self._image_to_screen_coords(p1[0], p1[1], image_index)
+            ep_x, ep_y = self._image_to_screen_coords(p2[0], p2[1], image_index)
             
-        if "original_value" in line and "original_unit" in line:
-            txt = f"{line['original_value']:.2f} {line['original_unit']}"
-        else:
-            txt = f"{line['real_length']:.2f} mm"
+            # 计算中点
+            midx = (sp_x + ep_x) / 2
+            midy = (sp_y + ep_y) / 2
             
-        p1, p2 = line["start"], line["end"]
-        sp_x, sp_y = self._image_to_screen_coords(p1[0], p1[1], image_index)
-        ep_x, ep_y = self._image_to_screen_coords(p2[0], p2[1], image_index)
-        
-        midx = (sp_x + ep_x) / 2
-        midy = (sp_y + ep_y) / 2
-        
-        font_metrics = painter.fontMetrics()
-        text_width = font_metrics.horizontalAdvance(txt)
-        text_height = font_metrics.height()
-        
-        painter.drawText(int(midx - text_width/2), int(midy + text_height/4), txt) 
+            # =========== 修改开始：计算垂直偏移 ===========
+            dx = ep_x - sp_x
+            dy = ep_y - sp_y
+            length = math.hypot(dx, dy)
+            
+            offset_distance = 15  # 文字距离线条的像素距离
+            
+            offset_x = 0
+            offset_y = 0
+            
+            if length > 0:
+                # 单位向量
+                ux = dx / length
+                uy = dy / length
+                
+                # 法向量（垂直向量）：(-uy, ux)
+                # 我们让文字始终往"上方"或"左方"偏，或者根据画线方向决定
+                # 这里简单地取其中一个垂直方向
+                offset_x = -uy * offset_distance
+                offset_y = ux * offset_distance
+                
+                # 优化：防止文字倒着跑，可以判断一下方向，让它总是往上偏
+                # 如果你发现文字有时候跑线条下面去了，可以用绝对值微调，
+                # 但通常固定的法向量旋转就足够清晰了。
+                
+            text_pos_x = midx + offset_x
+            text_pos_y = midy + offset_y
+            # ============================================
+            
+            font_metrics = painter.fontMetrics()
+            text_width = font_metrics.horizontalAdvance(txt)
+            text_height = font_metrics.height()
+            
+            # 绘制文字（减去宽高的一半以居中对齐到 text_pos）
+            painter.drawText(int(text_pos_x - text_width/2), int(text_pos_y + text_height/4), txt)
 
     def export_to_pdf(self, file_path, paper_settings):
         try:
